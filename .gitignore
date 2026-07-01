@@ -3,4 +3,4 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
-.weekly-plan-sync/
+config.json

@@ -9,6 +9,8 @@ from typing import Any
 from agents import Agent, FunctionTool, RunConfig, Runner, flush_traces
 from dotenv import load_dotenv
 
+from config import build_config_tools
+
 
 ALLOWED_ARCADE_TOOLS = [
     "NotionToolkit_GetPageContentById",
@@ -20,7 +22,11 @@ ALLOWED_ARCADE_TOOLS = [
 SYSTEM_PROMPT = """You are an Arcade-powered assistant running on the OpenAI Agents SDK.
 
 Use the available Arcade tools when the user asks you to read from Notion or create Linear issues.
-Ask for missing IDs or required issue fields instead of guessing.
+Always call load_config before any Notion or Linear tool call, then use those local defaults when they apply.
+Explicit user instructions override config.
+Use load_config when the user asks to inspect current defaults.
+Use update_config when the user asks to set or change config defaults.
+Ask for missing IDs or required issue fields only when neither the user nor config provides them.
 """
 
 
@@ -116,6 +122,7 @@ async def build_agent() -> Any:
 
     arcade_client = AsyncArcade()
     tools = await build_tools(arcade_client, ALLOWED_ARCADE_TOOLS)
+    tools.extend(build_config_tools())
     return Agent(
         name="Sync Action Items Agent",
         instructions=SYSTEM_PROMPT,
