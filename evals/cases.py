@@ -358,17 +358,17 @@ EVAL_CASES = [
     EvalCase(
         name="unknown nickname asks stores and continues",
         prompt="sync notion",
-        follow_up_inputs=["John Doe"],
+        follow_up_inputs=["dzhang55"],
         config=Config(
             default_notion_doc_id="default-page-123",
             default_linear_org="ENG",
         ),
-        linear_teammates={"Daniel": [], "John Doe": []},
-        markdown_by_page_id={"default-page-123": action_item_bullets("Johnny to fix Sentry error")},
+        linear_teammates={"dzhang55": [], "John Doe": []},
+        markdown_by_page_id={"default-page-123": action_item_bullets("Daniel to fix Sentry error")},
         expected_created_titles=["Fix Sentry error"],
         expected_created_teams=["ENG"],
-        expected_created_assignees=["John Doe"],
+        expected_created_assignees=["dzhang55"],
         expected_notion_call={"page_id": "default-page-123"},
-        expected_final_linear_teammates={"Daniel": [], "John Doe": ["Johnny"]},
+        expected_final_linear_teammates={"dzhang55": ["Daniel"], "John Doe": []},
     ),
 ]

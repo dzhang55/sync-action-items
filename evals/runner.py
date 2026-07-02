@@ -10,6 +10,7 @@ Optional:
     OPENAI_MODEL=gpt-5-nano
     AGENT_EVAL_TIMEOUT_SECONDS=45
     AGENT_EVAL_CONCURRENCY=10
+    AGENT_EVAL_RUNS_PER_CASE=3
 
 The runner prints a short score summary, writes an HTML table report, and exits
 with status 1 if any eval case fails. These evals call the OpenAI API, so they
@@ -55,6 +56,7 @@ load_dotenv()
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_EVAL_TIMEOUT_SECONDS = 120
 DEFAULT_EVAL_CONCURRENCY = 10
+DEFAULT_EVAL_RUNS_PER_CASE = 3
 DEFAULT_EVAL_REPORT_DIR = Path("evals/reports")
 OPENAI_TRACE_LOG_URL = "https://platform.openai.com/logs/trace"
 
@@ -71,6 +73,10 @@ def eval_concurrency() -> int:
     return int(os.getenv("AGENT_EVAL_CONCURRENCY") or DEFAULT_EVAL_CONCURRENCY)
 
 
+def eval_runs_per_case() -> int:
+    return int(os.getenv("AGENT_EVAL_RUNS_PER_CASE") or DEFAULT_EVAL_RUNS_PER_CASE)
+
+
 def eval_report_path() -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return DEFAULT_EVAL_REPORT_DIR / f"agent-eval-{timestamp}.html"
@@ -78,6 +84,45 @@ def eval_report_path() -> Path:
 
 def trace_url(trace_id: str) -> str:
     return f"{OPENAI_TRACE_LOG_URL}?trace_id={trace_id}"
+
+
+def pluralize(count: int, singular: str, plural: str | None = None) -> str:
+    return singular if count == 1 else plural or f"{singular}s"
+
+
+def count_note(label: str, actual: int, expected: int) -> str:
+    return f"Expected {expected} {pluralize(expected, label)}, but saw {actual}."
+
+
+def format_expected_values(values: list[Any]) -> str:
+    if not values:
+        return "none"
+    return ", ".join("unassigned" if value is None else str(value) for value in values)
+
+
+def mismatch_note(label: str, actual: list[Any], expected: list[Any]) -> str:
+    return (
+        f"Expected {label}: {format_expected_values(expected)}. "
+        f"Actual {label}: {format_expected_values(actual)}."
+    )
+
+
+def strings_match_case_insensitive(actual: list[str], expected: list[str]) -> bool:
+    return [value.casefold() for value in actual] == [value.casefold() for value in expected]
+
+
+def notion_read_note(expected_call: dict[str, str]) -> str:
+    if "page_id" in expected_call:
+        return (
+            f"Expected to read Notion page id {expected_call['page_id']}, "
+            "but that read did not happen."
+        )
+    if "title" in expected_call:
+        return (
+            f"Expected to read Notion page titled {expected_call['title']}, "
+            "but that read did not happen."
+        )
+    return f"Expected a Notion page read with {expected_call}, but that read did not happen."
 
 
 def case_insensitive_lookup(mapping: dict[str, Any], key: str, default: Any) -> Any:
@@ -94,6 +139,8 @@ def case_insensitive_lookup(mapping: dict[str, Any], key: str, default: Any) -> 
 @dataclass(frozen=True)
 class EvalResult:
     case: EvalCase
+    run_number: int
+    run_total: int
     passed: bool
     load_config_calls: int
     load_linear_teammates_calls: int
@@ -238,6 +285,7 @@ class MockConfigTools:
 async def run_live_agent_eval(
     case: EvalCase,
     *,
+    run_number: int,
     trace_id: str,
 ) -> tuple[MockArcadeTools, MockConfigTools]:
     arcade = MockArcadeTools(
@@ -260,7 +308,7 @@ async def run_live_agent_eval(
             run_config=RunConfig(
                 workflow_name="Sync Action Items Agent Eval",
                 trace_id=trace_id,
-                trace_metadata={"eval": case.name},
+                trace_metadata={"eval": case.name, "eval_run": str(run_number)},
             ),
         ),
         timeout=eval_timeout_seconds(),
@@ -274,7 +322,7 @@ async def run_live_agent_eval(
                 run_config=RunConfig(
                     workflow_name="Sync Action Items Agent Eval",
                     trace_id=trace_id,
-                    trace_metadata={"eval": case.name},
+                    trace_metadata={"eval": case.name, "eval_run": str(run_number)},
                 ),
             ),
             timeout=eval_timeout_seconds(),
@@ -288,6 +336,8 @@ def evaluate_case_result(
     arcade: MockArcadeTools,
     config: MockConfigTools,
     *,
+    run_number: int = 1,
+    run_total: int = 1,
     trace_url: str | None = None,
 ) -> EvalResult:
     notes = []
@@ -297,38 +347,58 @@ def evaluate_case_result(
 
     if len(config.load_config_calls) != case.expected_load_config_calls:
         notes.append(
-            f"load_config {len(config.load_config_calls)} != {case.expected_load_config_calls}"
+            count_note(
+                "load_config call",
+                len(config.load_config_calls),
+                case.expected_load_config_calls,
+            )
         )
     if len(config.load_linear_teammates_calls) != case.expected_load_config_calls:
         notes.append(
-            "load_linear_teammates "
-            f"{len(config.load_linear_teammates_calls)} != {case.expected_load_config_calls}"
+            count_note(
+                "load_linear_teammates call",
+                len(config.load_linear_teammates_calls),
+                case.expected_load_config_calls,
+            )
         )
     if len(arcade.search_calls) != case.expected_search_calls:
-        notes.append(f"search {len(arcade.search_calls)} != {case.expected_search_calls}")
-    if len(arcade.linear_create_issue_calls) != case.expected_create_calls:
         notes.append(
-            f"create {len(arcade.linear_create_issue_calls)} != {case.expected_create_calls}"
+            count_note(
+                "Notion search",
+                len(arcade.search_calls),
+                case.expected_search_calls,
+            )
         )
-    if titles != case.expected_created_titles:
-        notes.append(f"titles {titles!r} != {case.expected_created_titles!r}")
+    if len(arcade.linear_create_issue_calls) != case.expected_create_calls:
+        actual_creates = len(arcade.linear_create_issue_calls)
+        expected_creates = case.expected_create_calls
+        notes.append(
+            f"Expected {expected_creates} Linear "
+            f"{pluralize(expected_creates, 'issue')} to be created, but the agent "
+            f"created {actual_creates}."
+        )
+    if not strings_match_case_insensitive(titles, case.expected_created_titles):
+        notes.append(mismatch_note("issue titles", titles, case.expected_created_titles))
     if case.expected_created_teams and teams != case.expected_created_teams:
-        notes.append(f"teams {teams!r} != {case.expected_created_teams!r}")
+        notes.append(mismatch_note("Linear teams", teams, case.expected_created_teams))
     if case.expected_created_assignees and assignees != case.expected_created_assignees:
-        notes.append(f"assignees {assignees!r} != {case.expected_created_assignees!r}")
+        notes.append(mismatch_note("assignees", assignees, case.expected_created_assignees))
     if case.expected_notion_call and case.expected_notion_call not in arcade.page_read_calls:
-        notes.append(f"missing notion read {case.expected_notion_call!r}")
+        notes.append(notion_read_note(case.expected_notion_call))
     if (
         case.expected_final_linear_teammates is not None
         and config.current_linear_teammates != case.expected_final_linear_teammates
     ):
         notes.append(
-            "linear_teammates "
-            f"{config.current_linear_teammates!r} != {case.expected_final_linear_teammates!r}"
+            "Expected stored Linear teammates to be "
+            f"{case.expected_final_linear_teammates}, but they were "
+            f"{config.current_linear_teammates}."
         )
 
     return EvalResult(
         case=case,
+        run_number=run_number,
+        run_total=run_total,
         passed=not notes,
         load_config_calls=len(config.load_config_calls),
         load_linear_teammates_calls=len(config.load_linear_teammates_calls),
@@ -371,12 +441,20 @@ def format_eval_report(results: list[EvalResult]) -> str:
     lines = [
         "",
         "Agent eval score",
-        f"cases passed: {summary.cases_passed}/{summary.cases_total}",
+        f"runs passed: {summary.cases_passed}/{summary.cases_total}",
         f"load_config calls: {summary.actual_loads}/{summary.expected_loads}",
         f"load_linear_teammates calls: {summary.actual_teammate_loads}/{summary.expected_loads}",
         f"notion searches: {summary.actual_searches}/{summary.expected_searches}",
         f"linear issues created: {summary.actual_creates}/{summary.expected_creates}",
+        "",
+        "Run results",
     ]
+    for result in results:
+        status = "PASS" if result.passed else "FAIL"
+        lines.append(
+            f"{result.case.name} run {result.run_number}/{result.run_total}: "
+            f"{status} ({format_notes(result.notes)})"
+        )
     return "\n".join(lines)
 
 
@@ -412,6 +490,7 @@ def format_eval_html_report(results: list[EvalResult]) -> str:
             f"""
             <tr>
               <td class="case">{format_case_html(result)}</td>
+              <td>{html_escape(f"{result.run_number}/{result.run_total}")}</td>
               <td><span class="badge {status_class}">{status_text}</span></td>
               <td>{html_escape(score_cell(result.load_config_calls, result.case.expected_load_config_calls))}</td>
               <td>{html_escape(score_cell(result.load_linear_teammates_calls, result.case.expected_load_config_calls))}</td>
@@ -570,6 +649,7 @@ def format_eval_html_report(results: list[EvalResult]) -> str:
       <thead>
         <tr>
           <th>Case</th>
+          <th>Run</th>
           <th>Status</th>
           <th>load_config</th>
           <th>load_linear_teammates</th>
@@ -598,33 +678,57 @@ async def run_one_eval_case(
     index: int,
     case: EvalCase,
     *,
-    total_cases: int,
+    run_number: int,
+    run_total: int,
+    total_runs: int,
     semaphore: asyncio.Semaphore,
 ) -> EvalResult:
     async with semaphore:
         trace_id = gen_trace_id()
         current_trace_url = trace_url(trace_id)
         print(
-            f"Running agent eval {index}/{total_cases}: {case.name} "
+            f"Running agent eval {index}/{total_runs}: {case.name} "
+            f"(run {run_number}/{run_total}) "
             f"(trace: {current_trace_url})"
         )
         try:
-            arcade, config = await run_live_agent_eval(case, trace_id=trace_id)
+            arcade, config = await run_live_agent_eval(
+                case,
+                run_number=run_number,
+                trace_id=trace_id,
+            )
             result = evaluate_case_result(
                 case,
                 arcade,
                 config,
+                run_number=run_number,
+                run_total=run_total,
                 trace_url=current_trace_url,
             )
         except TimeoutError:
             result = EvalResult(
                 case=case,
+                run_number=run_number,
+                run_total=run_total,
                 passed=False,
                 load_config_calls=0,
                 load_linear_teammates_calls=0,
                 search_calls=0,
                 create_calls=0,
                 notes=[f"timed out after {eval_timeout_seconds()} seconds"],
+                trace_url=current_trace_url,
+            )
+        except Exception as exc:
+            result = EvalResult(
+                case=case,
+                run_number=run_number,
+                run_total=run_total,
+                passed=False,
+                load_config_calls=0,
+                load_linear_teammates_calls=0,
+                search_calls=0,
+                create_calls=0,
+                notes=[f"{type(exc).__name__}: {exc}"],
                 trace_url=current_trace_url,
             )
         status = "PASS" if result.passed else "FAIL"
@@ -643,19 +747,32 @@ async def run_all_evals() -> list[EvalResult]:
     concurrency = eval_concurrency()
     if concurrency < 1:
         raise ValueError("AGENT_EVAL_CONCURRENCY must be at least 1")
+    runs_per_case = eval_runs_per_case()
+    if runs_per_case < 1:
+        raise ValueError("AGENT_EVAL_RUNS_PER_CASE must be at least 1")
 
-    total_cases = len(EVAL_CASES)
-    print(f"Running {total_cases} agent evals with concurrency {concurrency}")
+    total_runs = len(EVAL_CASES) * runs_per_case
+    print(
+        f"Running {len(EVAL_CASES)} agent evals {runs_per_case} times each "
+        f"({total_runs} total runs) with concurrency {concurrency}"
+    )
     semaphore = asyncio.Semaphore(concurrency)
+    eval_runs = [
+        (case, run_number)
+        for case in EVAL_CASES
+        for run_number in range(1, runs_per_case + 1)
+    ]
     return await asyncio.gather(
         *(
             run_one_eval_case(
                 index,
                 case,
-                total_cases=total_cases,
+                run_number=run_number,
+                run_total=runs_per_case,
+                total_runs=total_runs,
                 semaphore=semaphore,
             )
-            for index, case in enumerate(EVAL_CASES, start=1)
+            for index, (case, run_number) in enumerate(eval_runs, start=1)
         )
     )
 

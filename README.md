@@ -35,8 +35,10 @@ Run the live LLM evals:
 uv run python -m evals.runner
 ```
 
-The eval runner runs 10 cases at a time by default. Override this when needed:
+The eval runner runs each case 3 times and runs 10 total evals at a time by default.
+Override this when needed:
 
 ```bash
 AGENT_EVAL_CONCURRENCY=4 uv run python -m evals.runner
+AGENT_EVAL_RUNS_PER_CASE=1 uv run python -m evals.runner
 ```
