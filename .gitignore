@@ -1,6 +1,8 @@
 .venv*/
+.DS_Store
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
 config.json
+evals/reports/

@@ -1,25 +1,55 @@
-import sys
-from pathlib import Path
+import asyncio
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pytest
 
-from agent import BASE_SYSTEM_PROMPT
-from config import CONFIG_CONTEXT_PREFIX, Config, save_config
+from agent import authorize_tool
 
 
-def test_instructions_require_loading_config_before_notion_or_linear_calls(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    save_config(
-        Config(
-            default_notion_doc_name="Weekly Plan",
-            default_assignee="Daniel",
-            default_linear_org="ARC",
-            default_labels=["feature"],
-        )
-    )
+class FakeAuthorizationResult:
+    status = "pending"
 
-    assert "Use the available Arcade tools" in BASE_SYSTEM_PROMPT
-    assert "Always call load_config before any Notion or Linear tool call" in BASE_SYSTEM_PROMPT
-    assert CONFIG_CONTEXT_PREFIX not in BASE_SYSTEM_PROMPT
-    assert '"default_notion_doc_name": "Weekly Plan"' not in BASE_SYSTEM_PROMPT
-    assert '"default_labels": ["feature"]' not in BASE_SYSTEM_PROMPT
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+
+class FakeAuth:
+    def __init__(self, url: str) -> None:
+        self.waited_for: FakeAuthorizationResult | None = None
+
+    async def wait_for_completion(self, result: FakeAuthorizationResult) -> None:
+        self.waited_for = result
+
+
+class FakeTools:
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    async def authorize(self, *, tool_name: str, user_id: str) -> FakeAuthorizationResult:
+        return FakeAuthorizationResult(self.url)
+
+
+class FakeArcadeClient:
+    def __init__(self, url: str) -> None:
+        self.tools = FakeTools(url)
+        self.auth = FakeAuth(url)
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "auth_url"),
+    [
+        ("NotionToolkit_GetPageContentById", "https://arcade.dev/auth/notion"),
+        ("Linear_CreateIssue", "https://arcade.dev/auth/linear"),
+    ],
+)
+def test_authorize_tool_prints_authorization_url_when_auth_is_required(
+    tool_name: str,
+    auth_url: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeArcadeClient(auth_url)
+
+    asyncio.run(authorize_tool(client, user_id="eval-user", tool_name=tool_name))
+
+    captured = capsys.readouterr()
+    assert f"{tool_name} requires authorization. Open this URL: {auth_url}" in captured.out
+    assert client.auth.waited_for is not None
