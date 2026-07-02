@@ -9,6 +9,7 @@ Required:
 Optional:
     OPENAI_MODEL=gpt-5-nano
     AGENT_EVAL_TIMEOUT_SECONDS=45
+    AGENT_EVAL_CONCURRENCY=10
 
 The runner prints a short score summary, writes an HTML table report, and exits
 with status 1 if any eval case fails. These evals call the OpenAI API, so they
@@ -26,7 +27,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agents import Agent, FunctionTool, RunConfig, Runner, flush_traces, function_tool
+from agents import (
+    Agent,
+    FunctionTool,
+    RunConfig,
+    Runner,
+    flush_traces,
+    function_tool,
+    gen_trace_id,
+)
 from dotenv import load_dotenv
 
 from agent import SYSTEM_PROMPT
@@ -38,7 +47,9 @@ load_dotenv()
 
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 DEFAULT_EVAL_TIMEOUT_SECONDS = 45
+DEFAULT_EVAL_CONCURRENCY = 10
 DEFAULT_EVAL_REPORT_DIR = Path("evals/reports")
+OPENAI_TRACES_URL = "https://platform.openai.com/traces"
 
 
 def openai_model_from_env() -> str:
@@ -49,9 +60,17 @@ def eval_timeout_seconds() -> float:
     return float(os.getenv("AGENT_EVAL_TIMEOUT_SECONDS") or DEFAULT_EVAL_TIMEOUT_SECONDS)
 
 
+def eval_concurrency() -> int:
+    return int(os.getenv("AGENT_EVAL_CONCURRENCY") or DEFAULT_EVAL_CONCURRENCY)
+
+
 def eval_report_path() -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return DEFAULT_EVAL_REPORT_DIR / f"agent-eval-{timestamp}.html"
+
+
+def trace_url(trace_id: str) -> str:
+    return f"{OPENAI_TRACES_URL}/{trace_id}"
 
 
 @dataclass(frozen=True)
@@ -62,6 +81,7 @@ class EvalResult:
     search_calls: int
     create_calls: int
     notes: list[str]
+    trace_url: str | None = None
 
 
 class MockArcadeTools:
@@ -165,7 +185,11 @@ class MockConfigTools:
         ]
 
 
-async def run_live_agent_eval(case: EvalCase) -> tuple[MockArcadeTools, list[dict[str, Any]]]:
+async def run_live_agent_eval(
+    case: EvalCase,
+    *,
+    trace_id: str,
+) -> tuple[MockArcadeTools, list[dict[str, Any]]]:
     arcade = MockArcadeTools(
         markdown_by_page_id=case.markdown_by_page_id,
         markdown_by_title=case.markdown_by_title,
@@ -185,6 +209,7 @@ async def run_live_agent_eval(case: EvalCase) -> tuple[MockArcadeTools, list[dic
             max_turns=8,
             run_config=RunConfig(
                 workflow_name="Sync Action Items Agent Eval",
+                trace_id=trace_id,
                 trace_metadata={"eval": case.name},
             ),
         ),
@@ -198,6 +223,8 @@ def evaluate_case_result(
     case: EvalCase,
     arcade: MockArcadeTools,
     load_config_calls: list[dict[str, Any]],
+    *,
+    trace_url: str | None = None,
 ) -> EvalResult:
     notes = []
     titles = [call["title"] for call in arcade.linear_create_issue_calls]
@@ -228,6 +255,7 @@ def evaluate_case_result(
         search_calls=len(arcade.search_calls),
         create_calls=len(arcade.linear_create_issue_calls),
         notes=notes,
+        trace_url=trace_url,
     )
 
 
@@ -281,6 +309,16 @@ def html_escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def format_case_html(result: EvalResult) -> str:
+    case_name = html_escape(result.case.name)
+    if not result.trace_url:
+        return case_name
+    return (
+        f'<a href="{html_escape(result.trace_url)}" target="_blank" '
+        f'rel="noopener noreferrer">{case_name}</a>'
+    )
+
+
 def format_eval_html_report(results: list[EvalResult]) -> str:
     summary = summarize_results(results)
     rows = []
@@ -290,7 +328,7 @@ def format_eval_html_report(results: list[EvalResult]) -> str:
         rows.append(
             f"""
             <tr>
-              <td class="case">{html_escape(result.case.name)}</td>
+              <td class="case">{format_case_html(result)}</td>
               <td><span class="badge {status_class}">{status_text}</span></td>
               <td>{html_escape(score_cell(result.load_config_calls, result.case.expected_load_config_calls))}</td>
               <td>{html_escape(score_cell(result.search_calls, result.case.expected_search_calls))}</td>
@@ -397,6 +435,13 @@ def format_eval_html_report(results: list[EvalResult]) -> str:
       width: 28%;
       font-weight: 600;
     }}
+    .case a {{
+      color: var(--accent);
+      text-decoration: none;
+    }}
+    .case a:hover {{
+      text-decoration: underline;
+    }}
     .notes {{
       width: 34%;
       color: var(--muted);
@@ -463,13 +508,28 @@ def write_eval_html_report(results: list[EvalResult], path: Path) -> Path:
     return path
 
 
-async def run_all_evals() -> list[EvalResult]:
-    results = []
-    for index, case in enumerate(EVAL_CASES, start=1):
-        print(f"Running agent eval {index}/{len(EVAL_CASES)}: {case.name}")
+async def run_one_eval_case(
+    index: int,
+    case: EvalCase,
+    *,
+    total_cases: int,
+    semaphore: asyncio.Semaphore,
+) -> EvalResult:
+    async with semaphore:
+        trace_id = gen_trace_id()
+        current_trace_url = trace_url(trace_id)
+        print(
+            f"Running agent eval {index}/{total_cases}: {case.name} "
+            f"(trace: {current_trace_url})"
+        )
         try:
-            arcade, load_config_calls = await run_live_agent_eval(case)
-            result = evaluate_case_result(case, arcade, load_config_calls)
+            arcade, load_config_calls = await run_live_agent_eval(case, trace_id=trace_id)
+            result = evaluate_case_result(
+                case,
+                arcade,
+                load_config_calls,
+                trace_url=current_trace_url,
+            )
         except TimeoutError:
             result = EvalResult(
                 case=case,
@@ -478,8 +538,8 @@ async def run_all_evals() -> list[EvalResult]:
                 search_calls=0,
                 create_calls=0,
                 notes=[f"timed out after {eval_timeout_seconds()} seconds"],
+                trace_url=current_trace_url,
             )
-        results.append(result)
         status = "PASS" if result.passed else "FAIL"
         print(
             f"{status}: load_config {result.load_config_calls}/"
@@ -487,7 +547,28 @@ async def run_all_evals() -> list[EvalResult]:
             f"{case.expected_search_calls}, create {result.create_calls}/"
             f"{case.expected_create_calls}"
         )
-    return results
+        return result
+
+
+async def run_all_evals() -> list[EvalResult]:
+    concurrency = eval_concurrency()
+    if concurrency < 1:
+        raise ValueError("AGENT_EVAL_CONCURRENCY must be at least 1")
+
+    total_cases = len(EVAL_CASES)
+    print(f"Running {total_cases} agent evals with concurrency {concurrency}")
+    semaphore = asyncio.Semaphore(concurrency)
+    return await asyncio.gather(
+        *(
+            run_one_eval_case(
+                index,
+                case,
+                total_cases=total_cases,
+                semaphore=semaphore,
+            )
+            for index, case in enumerate(EVAL_CASES, start=1)
+        )
+    )
 
 
 async def main_async() -> int:

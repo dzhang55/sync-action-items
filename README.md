@@ -26,3 +26,17 @@ uv run python agent.py
 ```
 
 `agent.py` contains the allowed Arcade tool list, an `authorize_tool` helper, Arcade-to-OpenAI tool construction, and the interactive main loop.
+
+## Evals
+
+Run the live LLM evals:
+
+```bash
+uv run python -m evals.runner
+```
+
+The eval runner runs 10 cases at a time by default. Override this when needed:
+
+```bash
+AGENT_EVAL_CONCURRENCY=4 uv run python -m evals.runner
+```
