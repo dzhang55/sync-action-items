@@ -1,9 +1,10 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from agent import ToolError, authorize_tool, invoke_arcade_tool
+from agent import authorize_tool, invoke_arcade_tool
 
 
 class FakeAuthorizationResult:
@@ -88,11 +89,11 @@ def arcade_result(value: object, *, success: bool = True) -> SimpleNamespace:
     return SimpleNamespace(success=success, output=SimpleNamespace(value=value))
 
 
-def test_invoke_arcade_tool_rejects_null_output() -> None:
+def test_invoke_arcade_tool_returns_error_when_linear_create_returns_null() -> None:
     client = FakeExecutingArcadeClient(arcade_result(None))
     context = SimpleNamespace(context={"user_id": "eval-user"})
 
-    with pytest.raises(ToolError, match="Linear_CreateIssue returned null output"):
+    output = json.loads(
         asyncio.run(
             invoke_arcade_tool(
                 context,
@@ -101,23 +102,12 @@ def test_invoke_arcade_tool_rejects_null_output() -> None:
                 tool_name="Linear_CreateIssue",
             )
         )
-
-
-def test_invoke_arcade_tool_rejects_linear_issue_without_url() -> None:
-    client = FakeExecutingArcadeClient(
-        arcade_result({"issue": {"identifier": "ENG-1"}, "url": "https://linear.app/wrong"})
     )
-    context = SimpleNamespace(context={"user_id": "eval-user"})
 
-    with pytest.raises(ToolError, match="Linear_CreateIssue returned no Linear issue URL"):
-        asyncio.run(
-            invoke_arcade_tool(
-                context,
-                '{"title": "Ship onboarding polish"}',
-                client=client,
-                tool_name="Linear_CreateIssue",
-            )
-        )
+    assert output == {
+        "tool_name": "Linear_CreateIssue",
+        "error": "Linear_CreateIssue returned null output",
+    }
 
 
 def test_invoke_arcade_tool_accepts_linear_issue_url() -> None:

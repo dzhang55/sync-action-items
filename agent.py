@@ -48,7 +48,8 @@ When the user asks to sync Notion tasks into Linear:
 9. If any defaults were not set, set them to what was used in this user request. Do not override existing values.
 10. Only count a Linear issue as synced after Linear_CreateIssue returns a non-null result with a Linear issue URL.
 11. If Linear_CreateIssue fails, returns null, or returns no issue URL, tell the user the sync failed for that item. Do not say that item was synced.
-12. Reply to the user with a concise summary of the synced issues using this format:
+12. If any tool returns JSON with an "error" field, tell the user that error instead of treating the tool call as successful.
+13. Reply to the user with a concise summary of the synced issues using this format:
 
 I synced the action items from [notion_page_name] to [linear_team_name]:
 
@@ -103,6 +104,17 @@ def validate_tool_output(tool_name: str, value: Any) -> None:
         raise ToolError(f"{tool_name} returned no Linear issue URL: {value!r}")
 
 
+def format_tool_error(tool_name: str, error: ToolError) -> str:
+    return json.dumps(
+        {
+            "tool_name": tool_name,
+            "error": str(error),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+
 async def get_formatted_tool(client: Any, tool_name: str) -> dict[str, Any]:
     candidates = [tool_name]
     if "_" in tool_name:
@@ -125,23 +137,26 @@ async def invoke_arcade_tool(
     client: Any,
     tool_name: str,
 ) -> str:
-    user_id = context.context.get("user_id")
-    if not user_id:
-        raise ToolError("ARCADE_USER_ID is required")
+    try:
+        user_id = context.context.get("user_id")
+        if not user_id:
+            raise ToolError("ARCADE_USER_ID is required")
 
-    await authorize_tool(client, user_id, tool_name)
-    result = await client.tools.execute(
-        tool_name=tool_name,
-        input=json.loads(tool_args),
-        user_id=user_id,
-    )
-    if getattr(result, "success", True) is False:
-        raise ToolError(f"{tool_name} failed: {result}")
+        await authorize_tool(client, user_id, tool_name)
+        result = await client.tools.execute(
+            tool_name=tool_name,
+            input=json.loads(tool_args),
+            user_id=user_id,
+        )
+        if getattr(result, "success", True) is False:
+            raise ToolError(f"{tool_name} failed: {result}")
 
-    output = getattr(result, "output", None)
-    value = output.value if output is not None and hasattr(output, "value") else result
-    validate_tool_output(tool_name, value)
-    return json.dumps(value, indent=2, sort_keys=True, default=str)
+        output = getattr(result, "output", None)
+        value = output.value if output is not None and hasattr(output, "value") else result
+        validate_tool_output(tool_name, value)
+        return json.dumps(value, indent=2, sort_keys=True, default=str)
+    except ToolError as exc:
+        return format_tool_error(tool_name, exc)
 
 
 async def build_tools(client: Any, allowed_tools: list[str]) -> list[Any]:
