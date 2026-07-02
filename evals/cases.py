@@ -77,19 +77,17 @@ JUN_30_DISCUSSION = [
     "Reviewed the newest weekly priorities and separated discussion from tasks.",
     "Discussed which action items should become Linear issues after parsing.",
     "Checked that explicit assignee emails should override default ownership.",
-    "Confirmed checked items should remain in the notes but not create new work.",
+    "Confirmed last week's action items are done.",
     "Discussed how synced Linear links should prevent duplicate issues.",
     "Reviewed team defaults and when a prompt should override the configured team.",
     "Talked through how missing Notion pages should fail without creating issues.",
     "Confirmed the runner report should stay concise even with larger fixtures.",
     "Reviewed how longer notes may affect the model's tool selection.",
-    "Discussed keeping the latest section near the end of the document.",
     "Checked that the action-item header is consistent across weekly entries.",
     "Aligned on preserving older planning notes for realistic context.",
-    "Reviewed labels and whether they should be carried into created issues.",
+    "Reviewed how issue metadata should stay minimal during sync.",
     "Discussed using config defaults when action items omit an assignee.",
     "Confirmed search-based flows should still read the chosen page by id.",
-    "Captured the expectation that only relevant unchecked items become issues.",
     "Reviewed possible ambiguity between old notes and current tasks.",
     "Closed by recording the latest action items for this week.",
 ]
@@ -100,15 +98,15 @@ WEEKLY_PLANNING_PREAMBLE = "\n".join(
         *JUN_16_DISCUSSION,
         "",
         "## Action items",
-        "- [x] Send Jun 16 planning recap to stakeholders",
-        "- [x] Close out Jun 16 billing QA follow-up",
+        "- Send Jun 16 planning recap to stakeholders",
+        "- Close out Jun 16 billing QA follow-up",
         "",
         "# Jun 23",
         *JUN_23_DISCUSSION,
         "",
         "## Action items",
-        "- [x] Publish Jun 23 support handoff notes",
-        "- [x] Confirm Jun 23 launch smoke-test coverage",
+        "- Publish Jun 23 support handoff notes",
+        "- Confirm Jun 23 launch smoke-test coverage",
         "",
         "# Jun 30",
         *JUN_30_DISCUSSION,
@@ -123,21 +121,17 @@ def weekly_planning_doc(*latest_action_items: str) -> str:
     return "\n".join([WEEKLY_PLANNING_PREAMBLE, *action_items])
 
 
-def unchecked_tasks(*tasks: str) -> str:
-    return weekly_planning_doc(*(f"- [ ] {task}" for task in tasks))
+def action_item_bullets(*tasks: str) -> str:
+    return weekly_planning_doc(*(f"- {task}" for task in tasks))
 
 
 EVAL_CASES = [
     EvalCase(
         name="search page and create linear issues",
-        prompt=(
-            "Load config, search for the Notion page named 'Weekly Planning', parse it, "
-            "and create one Linear issue for each unchecked todo. Use explicit emails "
-            "in todos as assignees."
-        ),
-        config=Config(default_linear_org="ENG", default_labels=["weekly-planning"]),
+        prompt="sync my weekly planning",
+        config=Config(default_linear_org="ENG"),
         markdown_by_page_id={
-            "notion-page-123": unchecked_tasks(
+            "notion-page-123": action_item_bullets(
                 "Ship onboarding polish daniel@example.com",
                 "QA billing edge cases priya@example.com",
             )
@@ -152,35 +146,34 @@ EVAL_CASES = [
         expected_notion_call={"page_id": "notion-page-123"},
     ),
     EvalCase(
-        name="search page with no todos",
-        prompt=(
-            "Load config, search for the Notion page named 'Empty Planning', parse it, "
-            "and create Linear issues only for unchecked todo checkboxes."
-        ),
+        name="search page with no action item bullets",
+        prompt="sync weekly planning",
         config=Config(default_linear_org="ENG"),
         markdown_by_page_id={"empty-page-123": weekly_planning_doc()},
         search_results_by_title={
-            "Empty Planning": [{"id": "empty-page-123", "title": "Empty Planning"}]
+            "Weekly Planning": [{"id": "empty-page-123", "title": "Weekly Planning"}]
         },
         expected_search_calls=1,
         expected_notion_call={"page_id": "empty-page-123"},
     ),
     EvalCase(
-        name="completed todos are skipped",
-        prompt=(
-            "Sync my default Notion planning page into Linear. Create one Linear issue "
-            "for each unchecked checkbox item. Skip checked items."
-        ),
+        name="only action item section bullets are synced",
+        prompt="sync notion",
         config=Config(
             default_notion_doc_id="notion-page-123",
             default_linear_org="ENG",
-            default_labels=["weekly-planning"],
         ),
         markdown_by_page_id={
-            "notion-page-123": weekly_planning_doc(
-                "- [ ] Ship onboarding polish daniel@example.com",
-                "- [x] Already shipped priya@example.com",
-                "- [ ] QA billing edge cases priya@example.com",
+            "notion-page-123": "\n".join(
+                [
+                    "# Jun 30",
+                    "## Notes",
+                    "- Already shipped priya@example.com",
+                    "",
+                    "## Action items",
+                    "- Ship onboarding polish daniel@example.com",
+                    "- QA billing edge cases priya@example.com",
+                ]
             )
         },
         expected_created_titles=["Ship onboarding polish", "QA billing edge cases"],
@@ -190,15 +183,12 @@ EVAL_CASES = [
     ),
     EvalCase(
         name="previously synced tasks are skipped",
-        prompt=(
-            "Sync my default Notion planning page into Linear. Create issues for unchecked "
-            "todos, but skip any todo that already includes a Linear issue URL."
-        ),
+        prompt="notion to linear",
         config=Config(default_notion_doc_id="notion-page-123", default_linear_org="ENG"),
         markdown_by_page_id={
             "notion-page-123": weekly_planning_doc(
-                "- [ ] Already synced https://linear.app/acme/issue/ENG-88",
-                "- [ ] Prepare launch checklist priya@example.com",
+                "- Already synced https://linear.app/acme/issue/ENG-88",
+                "- Prepare launch checklist priya@example.com",
             )
         },
         expected_created_titles=["Prepare launch checklist"],
@@ -208,21 +198,16 @@ EVAL_CASES = [
     ),
     EvalCase(
         name="cannot find notion page",
-        prompt=(
-            "Load config, search for the Notion page named 'Missing Planning', parse it, "
-            "and create Linear issues for unchecked todos."
-        ),
+        prompt="sync weekly planning",
         config=Config(default_linear_org="ENG"),
-        search_results_by_title={"Missing Planning": []},
+        search_results_by_title={"Weekly Planning": []},
         expected_search_calls=1,
     ),
     EvalCase(
         name="no notion page provided uses default",
-        prompt=(
-            "Sync my default Notion planning page into Linear. Create issues for unchecked todos."
-        ),
+        prompt="sync notion",
         config=Config(default_notion_doc_id="default-page-123", default_linear_org="ENG"),
-        markdown_by_page_id={"default-page-123": unchecked_tasks("Draft changelog")},
+        markdown_by_page_id={"default-page-123": action_item_bullets("Draft changelog")},
         expected_created_titles=["Draft changelog"],
         expected_created_teams=["ENG"],
         expected_created_assignees=[None],
@@ -230,11 +215,9 @@ EVAL_CASES = [
     ),
     EvalCase(
         name="no linear team provided uses default",
-        prompt=(
-            "Sync the default Notion planning page into Linear. Create issues for unchecked todos."
-        ),
+        prompt="notion to linear",
         config=Config(default_notion_doc_id="default-page-123", default_linear_org="Product"),
-        markdown_by_page_id={"default-page-123": unchecked_tasks("Review import logs")},
+        markdown_by_page_id={"default-page-123": action_item_bullets("Review import logs")},
         expected_created_titles=["Review import logs"],
         expected_created_teams=["Product"],
         expected_created_assignees=[None],
@@ -242,17 +225,13 @@ EVAL_CASES = [
     ),
     EvalCase(
         name="uses default assignee",
-        prompt=(
-            "Sync the default Notion planning page into Linear. Create issues for unchecked "
-            "todos and use config defaults when a todo has no assignee."
-        ),
+        prompt="sync notion",
         config=Config(
             default_notion_doc_id="notion-page-123",
             default_assignee="@me",
             default_linear_org="Product Engineering",
-            default_labels=["weekly-planning", "ops"],
         ),
-        markdown_by_page_id={"notion-page-123": unchecked_tasks("Prepare launch checklist")},
+        markdown_by_page_id={"notion-page-123": action_item_bullets("Prepare launch checklist")},
         expected_created_titles=["Prepare launch checklist"],
         expected_created_teams=["Product Engineering"],
         expected_created_assignees=["@me"],
@@ -260,18 +239,15 @@ EVAL_CASES = [
     ),
     EvalCase(
         name="notion page override beats config default",
-        prompt=(
-            "Load config, but use the Notion page named 'Launch Planning' instead of the "
-            "default Notion page. Search for that page and create issues for unchecked todos."
-        ),
+        prompt="sync launch planning",
         config=Config(
             default_notion_doc_id="default-page-123",
             default_notion_doc_name="Default Planning",
             default_linear_org="ENG",
         ),
         markdown_by_page_id={
-            "default-page-123": unchecked_tasks("Do not use this task"),
-            "launch-page-456": unchecked_tasks("Coordinate launch review"),
+            "default-page-123": action_item_bullets("Do not use this task"),
+            "launch-page-456": action_item_bullets("Coordinate launch review"),
         },
         search_results_by_title={
             "Launch Planning": [{"id": "launch-page-456", "title": "Launch Planning"}]
@@ -284,14 +260,11 @@ EVAL_CASES = [
     ),
     EvalCase(
         name="linear team override beats config default",
-        prompt=(
-            "Sync the default Notion planning page into Linear. Create issues for unchecked "
-            "todos in the Linear team Support, even though config has a different default team."
-        ),
+        prompt="sync notion to BUG",
         config=Config(default_notion_doc_id="default-page-123", default_linear_org="ENG"),
-        markdown_by_page_id={"default-page-123": unchecked_tasks("Triage customer escalation")},
+        markdown_by_page_id={"default-page-123": action_item_bullets("Triage customer escalation")},
         expected_created_titles=["Triage customer escalation"],
-        expected_created_teams=["Support"],
+        expected_created_teams=["BUG"],
         expected_created_assignees=[None],
         expected_notion_call={"page_id": "default-page-123"},
     ),

@@ -19,16 +19,46 @@ ALLOWED_ARCADE_TOOLS = [
     "Linear_CreateIssue",
 ]
 
-SYSTEM_PROMPT = """You are an Arcade-powered assistant running on the OpenAI Agents SDK.
+SYSTEM_PROMPT = """You sync action items from Notion planning docs into Linear issues.
 
-Use the available Arcade tools when the user asks you to read from Notion or create Linear issues.
-Always call load_config before any Notion or Linear tool call, then use those local defaults when they apply.
-Use default_notion_doc_id or default_notion_doc_name when the user asks for a Notion page without specifying one.
-When creating Linear issues, use default_linear_org as the team, default_assignee when the task has no assignee, and default_labels as labels.
-Explicit user instructions override config.
-Use load_config when the user asks to inspect current defaults.
-Use update_config when the user asks to set or change config defaults.
-Ask for missing IDs or required issue fields only when neither the user nor config provides them.
+
+# Workflow
+
+When the user asks to sync Notion tasks into Linear:
+
+1. Call load_config exactly once before the first Notion or Linear tool call for this user request.
+2. Decide which Notion page to read:
+   - If the user names a Notion page, normalize the page title from the request, search Notion for that title, and read the selected page by id.
+   - If the user does not name a page, use default_notion_doc_id when configured.
+   - If the user does not name a page and no default_notion_doc_id is configured, use default_notion_doc_name when configured.
+   - If no defaults are configured and the user does not name a page, ask the user which page they'd like to sync.
+   - If searching for the page does not yield a good match, tell the user the pages you found and ask them which one they'd like to sync.
+3. Decide which Linear team to use:
+   - If the user names a Linear team destination, use that team.
+   - If the user does not mention a Linear destination use default_linear_org.
+   - If the user does not name a Linear destination and default_linear_org is not set, ask the user which org they'd like to set.
+4. Find the latest/current "Action items" section in the Notion page content.
+5. Create Linear issues for every "-" bullet in that Action items section.
+6. Do not create issues from bullets outside the latest/current Action items section.
+7. Skip Action items bullets that already contain a Linear issue URL.
+8. For each synced Action items bullet:
+   - Derive the issue title from the bullet text after removing assignee mentions and Linear URLs.
+   - If the line mentions an assignee, such as an email address or @handle, assign the issue to that person.
+   - If the line has no assignee mention, use default_assignee when configured; otherwise leave the issue unassigned.
+9. If any defaults were not set, set them to what was used in this user request. Do not override existing values.
+10. Only count a Linear issue as synced after Linear_CreateIssue returns a non-null result with a Linear issue URL.
+11. If Linear_CreateIssue fails, returns null, or returns no issue URL, tell the user the sync failed for that item. Do not say that item was synced.
+12. Reply to the user with a concise summary of the synced issues using this format:
+
+I synced the action items from [notion_page_name] to [linear_team_name]:
+
+- [Task 1 title]: [description] ([Linear issue URL])
+  - Assignee: [assignee or Unassigned]
+
+- [Task 2 title]: [description] ([Linear issue URL])
+  - Assignee: [assignee or Unassigned]
+
+If no issues were created, say that no Action items bullets needed syncing from [notion_page_name] to [linear_team_name].
 """
 
 
@@ -53,6 +83,24 @@ def tool_to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "model_dump"):
         return value.model_dump()
     raise TypeError(f"Unexpected Arcade tool format: {type(value)!r}")
+
+
+def linear_issue_url(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    issue = value.get("issue")
+    if not isinstance(issue, dict):
+        return None
+    url = issue.get("url")
+    return url if isinstance(url, str) and url else None
+
+
+def validate_tool_output(tool_name: str, value: Any) -> None:
+    if value is None:
+        raise ToolError(f"{tool_name} returned null output")
+
+    if tool_name == "Linear_CreateIssue" and not linear_issue_url(value):
+        raise ToolError(f"{tool_name} returned no Linear issue URL: {value!r}")
 
 
 async def get_formatted_tool(client: Any, tool_name: str) -> dict[str, Any]:
@@ -92,6 +140,7 @@ async def invoke_arcade_tool(
 
     output = getattr(result, "output", None)
     value = output.value if output is not None and hasattr(output, "value") else result
+    validate_tool_output(tool_name, value)
     return json.dumps(value, indent=2, sort_keys=True, default=str)
 
 

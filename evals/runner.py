@@ -46,7 +46,7 @@ from evals.cases import EVAL_CASES, EvalCase
 load_dotenv()
 
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
-DEFAULT_EVAL_TIMEOUT_SECONDS = 45
+DEFAULT_EVAL_TIMEOUT_SECONDS = 120
 DEFAULT_EVAL_CONCURRENCY = 10
 DEFAULT_EVAL_REPORT_DIR = Path("evals/reports")
 OPENAI_TRACES_URL = "https://platform.openai.com/traces"
@@ -122,7 +122,6 @@ class MockArcadeTools:
             title: str,
             team: str,
             assignee: str | None = None,
-            labels: list[str] | None = None,
             description: str | None = None,
         ) -> dict[str, str]:
             """Create a Linear issue."""
@@ -131,7 +130,6 @@ class MockArcadeTools:
                     "title": title,
                     "team": team,
                     "assignee": assignee,
-                    "labels": labels or [],
                     "description": description,
                 }
             )

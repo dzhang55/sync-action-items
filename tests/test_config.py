@@ -4,8 +4,6 @@ import json
 import pytest
 
 from config import (
-    CONFIG_KEYS,
-    CONFIG_FIELD_SCHEMA,
     Config,
     build_config_tools,
     default_config,
@@ -29,7 +27,6 @@ def test_save_and_reload_config(tmp_path):
         default_notion_doc_id="notion-page-123",
         default_assignee="Daniel",
         default_linear_org="ARC",
-        default_labels=["bug"],
     )
 
     assert save_config(config, path) == config
@@ -44,19 +41,17 @@ def test_partial_update_preserves_unspecified_fields(tmp_path):
             default_notion_doc_id="notion-page-123",
             default_assignee="Daniel",
             default_linear_org="ARC",
-            default_labels=["bug"],
         ),
         path,
     )
 
-    updated = update_config(default_labels=["feature"], path=path)
+    updated = update_config(default_assignee="Priya", path=path)
 
     assert updated == Config(
         default_notion_doc_name="Weekly Plan",
         default_notion_doc_id="notion-page-123",
-        default_assignee="Daniel",
+        default_assignee="Priya",
         default_linear_org="ARC",
-        default_labels=["feature"],
     )
 
 
@@ -68,20 +63,18 @@ def test_update_rejects_unknown_keys(tmp_path):
                 "default_notion_doc_id": None,
                 "default_assignee": None,
                 "default_linear_org": None,
-                "default_labels": [],
                 "notion_doc_name": "Legacy Field",
             }
         )
 
 
-def test_legacy_default_label_loads_as_default_labels():
-    config = Config.from_dict({"default_label": "bug"})
+@pytest.mark.parametrize("key", ["default_label", "default_labels"])
+def test_label_fields_are_unknown(key: str):
+    with pytest.raises(ValueError, match="Unknown config key"):
+        Config.from_dict({key: "bug"})
 
-    assert config.default_labels == ["bug"]
-    assert "default_label" not in config.to_dict()
 
-
-def test_empty_list_clears_labels_while_omitted_fields_are_preserved(tmp_path):
+def test_update_rejects_default_labels(tmp_path):
     path = tmp_path / "config.json"
     save_config(
         Config(
@@ -89,20 +82,12 @@ def test_empty_list_clears_labels_while_omitted_fields_are_preserved(tmp_path):
             default_notion_doc_id="notion-page-123",
             default_assignee="Daniel",
             default_linear_org="ARC",
-            default_labels=["bug"],
         ),
         path,
     )
 
-    updated = update_config(default_labels=[], path=path)
-
-    assert updated == Config(
-        default_notion_doc_name="Weekly Plan",
-        default_notion_doc_id="notion-page-123",
-        default_assignee="Daniel",
-        default_linear_org="ARC",
-        default_labels=[],
-    )
+    with pytest.raises(ValueError, match="Unknown config key"):
+        asyncio.run(update_config_tool(None, '{"default_labels": []}', config_path=path))
 
 
 def test_config_tools_return_json(tmp_path):
@@ -114,7 +99,6 @@ def test_config_tools_return_json(tmp_path):
         "default_notion_doc_id": None,
         "default_assignee": None,
         "default_linear_org": None,
-        "default_labels": [],
     }
 
     update_result = json.loads(
@@ -126,7 +110,6 @@ def test_config_tools_return_json(tmp_path):
                         "default_notion_doc_name": "Weekly Plan",
                         "default_notion_doc_id": "notion-page-123",
                         "default_assignee": "Daniel",
-                        "default_labels": ["bug", "feature"],
                     }
                 ),
                 config_path=path,
@@ -139,13 +122,11 @@ def test_config_tools_return_json(tmp_path):
         "default_notion_doc_id": "notion-page-123",
         "default_assignee": "Daniel",
         "default_linear_org": None,
-        "default_labels": ["bug", "feature"],
     }
     assert load_config(path) == Config(
         default_notion_doc_name="Weekly Plan",
         default_notion_doc_id="notion-page-123",
         default_assignee="Daniel",
-        default_labels=["bug", "feature"],
     )
 
 
@@ -159,4 +140,4 @@ def test_format_config_context_renders_config_snapshot():
     assert "Current local config JSON:" in context
     assert "default_notion_doc_name" in context
     assert "default_notion_doc_id" in context
-    assert "default_labels" in context
+    assert "default_labels" not in context

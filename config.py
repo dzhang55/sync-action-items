@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +11,7 @@ from agents import FunctionTool
 CONFIG_PATH = Path("config.json")
 CONFIG_CONTEXT_PREFIX = "Current local config JSON:"
 UNSET = object()
-ConfigValue = str | list[str] | None
+ConfigValue = str | None
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,6 @@ class Config:
     default_notion_doc_id: str | None = None
     default_assignee: str | None = None
     default_linear_org: str | None = None
-    default_labels: list[str] = field(default_factory=list)
 
     @classmethod
     def keys(cls) -> tuple[str, ...]:
@@ -29,11 +28,6 @@ class Config:
     @classmethod
     def from_dict(cls, values: dict[str, Any]) -> "Config":
         normalized_values = dict(values)
-        legacy_default_label = normalized_values.pop("default_label", UNSET)
-        if legacy_default_label is not UNSET and "default_labels" not in normalized_values:
-            normalized_values["default_labels"] = (
-                [] if legacy_default_label is None else [legacy_default_label]
-            )
 
         unknown_keys = sorted(set(normalized_values) - set(cls.keys()))
         if unknown_keys:
@@ -41,7 +35,7 @@ class Config:
 
         config_values: dict[str, ConfigValue] = {}
         for key in cls.keys():
-            value = normalized_values.get(key, [] if key == "default_labels" else None)
+            value = normalized_values.get(key)
             validate_config_value(key, value)
             config_values[key] = value
         return cls(**config_values)
@@ -57,14 +51,7 @@ CONFIG_FIELD_SCHEMA = {
         {"type": "null"},
     ],
 }
-CONFIG_LABELS_FIELD_SCHEMA = {
-    "type": "array",
-    "items": {"type": "string"},
-}
-CONFIG_FIELD_SCHEMAS = {
-    key: CONFIG_LABELS_FIELD_SCHEMA if key == "default_labels" else CONFIG_FIELD_SCHEMA
-    for key in CONFIG_KEYS
-}
+CONFIG_FIELD_SCHEMAS = {key: CONFIG_FIELD_SCHEMA for key in CONFIG_KEYS}
 READ_CONFIG_SCHEMA = {
     "type": "object",
     "properties": {},
@@ -82,11 +69,6 @@ def default_config() -> Config:
 
 
 def validate_config_value(key: str, value: Any) -> None:
-    if key == "default_labels":
-        if not isinstance(value, list) or any(not isinstance(label, str) for label in value):
-            raise ValueError(f"{key} must be a list of strings")
-        return
-
     if value is not None and not isinstance(value, str):
         raise ValueError(f"{key} must be a string or null")
 
@@ -117,7 +99,6 @@ def update_config(
     default_notion_doc_id: str | None | object = UNSET,
     default_assignee: str | None | object = UNSET,
     default_linear_org: str | None | object = UNSET,
-    default_labels: list[str] | object = UNSET,
     path: Path = CONFIG_PATH,
 ) -> Config:
     update_fields = {
@@ -125,7 +106,6 @@ def update_config(
         "default_notion_doc_id": default_notion_doc_id,
         "default_assignee": default_assignee,
         "default_linear_org": default_linear_org,
-        "default_labels": default_labels,
     }
     config_values = load_config(path).to_dict()
     for key, value in update_fields.items():
@@ -171,7 +151,6 @@ async def update_config_tool(
             default_notion_doc_id=args.get("default_notion_doc_id", UNSET),
             default_assignee=args.get("default_assignee", UNSET),
             default_linear_org=args.get("default_linear_org", UNSET),
-            default_labels=args.get("default_labels", UNSET),
             path=config_path,
         ).to_dict(),
         indent=2,
