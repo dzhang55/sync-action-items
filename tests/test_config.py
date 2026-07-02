@@ -7,12 +7,17 @@ from config import (
     Config,
     build_config_tools,
     default_config,
+    default_linear_teammates,
     format_config_context,
     load_config,
+    load_linear_teammates,
+    load_linear_teammates_tool,
     read_config_tool,
     save_config,
+    save_linear_teammates,
     update_config,
     update_config_tool,
+    update_linear_teammates_tool,
 )
 
 
@@ -68,8 +73,8 @@ def test_update_rejects_unknown_keys(tmp_path):
         )
 
 
-@pytest.mark.parametrize("key", ["default_label", "default_labels"])
-def test_label_fields_are_unknown(key: str):
+@pytest.mark.parametrize("key", ["default_label", "default_labels", "linear_teammates"])
+def test_unknown_config_fields_are_rejected(key: str):
     with pytest.raises(ValueError, match="Unknown config key"):
         Config.from_dict({key: "bug"})
 
@@ -130,8 +135,74 @@ def test_config_tools_return_json(tmp_path):
     )
 
 
-def test_config_tools_expose_load_config_tool_name():
-    assert [tool.name for tool in build_config_tools()] == ["load_config", "update_config"]
+def test_load_linear_teammates_defaults_when_missing(tmp_path):
+    assert load_linear_teammates(tmp_path / "linear_teammates.json") == default_linear_teammates()
+
+
+def test_save_and_reload_linear_teammates(tmp_path):
+    path = tmp_path / "linear_teammates.json"
+    teammates = {"Daniel Zhang": ["dan"], "John Doe": []}
+
+    assert save_linear_teammates(teammates, path) == teammates
+    assert load_linear_teammates(path) == teammates
+
+
+@pytest.mark.parametrize(
+    ("linear_teammates", "error"),
+    [
+        ([], "linear_teammates must be an object"),
+        ({"": []}, "keys must be non-empty strings"),
+        ({"Daniel": "dan"}, "must be a list"),
+        ({"Daniel": [""]}, "nicknames must be non-empty strings"),
+        ({"Daniel": ["dan"], "Dana": ["DAN"]}, "Duplicate Linear teammate nickname"),
+        ({"Daniel": [], "daniel": []}, "Duplicate Linear teammate name"),
+    ],
+)
+def test_linear_teammates_rejects_malformed_values(tmp_path, linear_teammates, error):
+    with pytest.raises(ValueError, match=error):
+        save_linear_teammates(linear_teammates, tmp_path / "linear_teammates.json")
+
+
+def test_linear_teammate_tools_return_json(tmp_path):
+    path = tmp_path / "linear_teammates.json"
+
+    read_result = json.loads(
+        asyncio.run(load_linear_teammates_tool(None, "{}", linear_teammates_path=path))
+    )
+    assert read_result == {"linear_teammates": {}}
+
+    update_result = json.loads(
+        asyncio.run(
+            update_linear_teammates_tool(
+                None,
+                json.dumps({"linear_teammates": {"Daniel Zhang": ["dan"], "John Doe": []}}),
+                linear_teammates_path=path,
+            )
+        )
+    )
+
+    assert update_result == {"linear_teammates": {"Daniel Zhang": ["dan"], "John Doe": []}}
+    assert load_linear_teammates(path) == {"Daniel Zhang": ["dan"], "John Doe": []}
+
+
+def test_update_linear_teammates_tool_rejects_unknown_keys(tmp_path):
+    with pytest.raises(ValueError, match="Unknown linear teammate key"):
+        asyncio.run(
+            update_linear_teammates_tool(
+                None,
+                '{"linear_teammates": {}, "other": true}',
+                linear_teammates_path=tmp_path / "linear_teammates.json",
+            )
+        )
+
+
+def test_config_tools_expose_local_tool_names():
+    assert [tool.name for tool in build_config_tools()] == [
+        "load_config",
+        "update_config",
+        "load_linear_teammates",
+        "update_linear_teammates",
+    ]
 
 
 def test_format_config_context_renders_config_snapshot():
