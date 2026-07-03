@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 import os
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from agents import Agent, FunctionTool, RunConfig, Runner, flush_traces
 from dotenv import load_dotenv
 
-from config import build_config_tools
+from config import CONFIG_PATH, LINEAR_TEAMMATES_PATH, build_config_tools
 
 
 ALLOWED_ARCADE_TOOLS = [
@@ -73,6 +75,19 @@ If no issues were created, say that no Action items bullets needed syncing from 
 
 class ToolError(Exception):
     pass
+
+
+def reset_config_files(
+    paths: tuple[Path, ...] = (CONFIG_PATH, LINEAR_TEAMMATES_PATH),
+) -> list[Path]:
+    removed = []
+    for path in paths:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        removed.append(path)
+    return removed
 
 
 async def authorize_tool(client: Any, user_id: str, tool_name: str) -> None:
@@ -237,8 +252,15 @@ async def chat_loop() -> int:
         print(f"Agent: {result.final_output}")
 
 
-async def main_async() -> int:
+async def main_async(*, reset_config: bool = False) -> int:
     load_dotenv()
+    if reset_config:
+        removed = reset_config_files()
+        if removed:
+            print(f"Removed config files: {', '.join(str(path) for path in removed)}")
+        else:
+            print("No config files to remove.")
+
     missing = [
         name
         for name in ("OPENAI_API_KEY", "ARCADE_API_KEY", "ARCADE_USER_ID")
@@ -251,8 +273,19 @@ async def main_async() -> int:
     return await chat_loop()
 
 
-def main() -> int:
-    return asyncio.run(main_async())
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the Sync Action Items Agent.")
+    parser.add_argument(
+        "--reset-config",
+        action="store_true",
+        help="Remove config.json and linear_teammates.json before starting the agent.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    return asyncio.run(main_async(reset_config=args.reset_config))
 
 
 if __name__ == "__main__":

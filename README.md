@@ -25,6 +25,12 @@ Start the interactive agent:
 uv run python agent.py
 ```
 
+Reset saved defaults and teammate aliases before starting:
+
+```bash
+uv run python agent.py --reset-config
+```
+
 ## Evals
 
 Run the live LLM evals:

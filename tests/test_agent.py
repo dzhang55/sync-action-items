@@ -4,7 +4,27 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent import authorize_tool, invoke_arcade_tool
+from agent import authorize_tool, invoke_arcade_tool, parse_args, reset_config_files
+
+
+def test_parse_args_accepts_reset_config_flag() -> None:
+    args = parse_args(["--reset-config"])
+
+    assert args.reset_config is True
+
+
+def test_reset_config_files_removes_existing_files_and_ignores_missing(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    teammates_path = tmp_path / "linear_teammates.json"
+    missing_path = tmp_path / "missing.json"
+    config_path.write_text("{}\n")
+    teammates_path.write_text("{}\n")
+
+    removed = reset_config_files((config_path, teammates_path, missing_path))
+
+    assert removed == [config_path, teammates_path]
+    assert not config_path.exists()
+    assert not teammates_path.exists()
 
 
 class FakeAuthorizationResult:
