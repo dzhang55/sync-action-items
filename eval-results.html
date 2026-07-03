@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Agent Eval Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #20242a;
+      --muted: #68707c;
+      --line: #d9dee7;
+      --pass-bg: #e8f6ee;
+      --pass: #14743d;
+      --fail-bg: #fdecec;
+      --fail: #b42318;
+      --accent: #355caa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .meta {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .metric {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .metric strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 24px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: #eef1f6;
+      color: #3b4350;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:last-child td { border-bottom: 0; }
+    td:not(.case):not(.notes) {
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .case {
+      width: 28%;
+      font-weight: 600;
+    }
+    .case a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .case a:hover {
+      text-decoration: underline;
+    }
+    .notes {
+      width: 34%;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+    .badge {
+      display: inline-block;
+      min-width: 54px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
+    .badge.pass {
+      background: var(--pass-bg);
+      color: var(--pass);
+    }
+    .badge.fail {
+      background: var(--fail-bg);
+      color: var(--fail);
+    }
+    @media (max-width: 760px) {
+      main { padding: 24px 14px; }
+      .summary { grid-template-columns: 1fr 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Agent Eval Report</h1>
+    <p class="meta">Model: gpt-5-nano</p>
+    <section class="summary" aria-label="Eval score summary">
+      <div class="metric"><span>Cases Passed</span><strong>42/45</strong></div>
+      <div class="metric"><span>load_config Calls</span><strong>44/45</strong></div>
+      <div class="metric"><span>Teammate Loads</span><strong>44/45</strong></div>
+      <div class="metric"><span>Notion Searches</span><strong>11/12</strong></div>
+      <div class="metric"><span>Linear Issues Created</span><strong>45/45</strong></div>
+    </section>
+    <table>
+      <thead>
+        <tr>
+          <th>Case</th>
+          <th>Run</th>
+          <th>Status</th>
+          <th>load_config</th>
+          <th>load_linear_teammates</th>
+          <th>Search</th>
+          <th>Create</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_2315491c72104b8ea3fd2026513fe4fb" target="_blank" rel="noopener noreferrer">search page and create linear issues</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>2/2</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_e021dcbad7a34a99b55a4e7624f2119c" target="_blank" rel="noopener noreferrer">search page and create linear issues</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>2/2</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_802b8f74ffef49f18cc12a8404b9bd46" target="_blank" rel="noopener noreferrer">search page and create linear issues</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>2/2</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_c93aed42b3594e508f0855afaba4bdbe" target="_blank" rel="noopener noreferrer">search page with no action item bullets</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_26c984ab210e4956938acba76822513e" target="_blank" rel="noopener noreferrer">search page with no action item bullets</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_4434d720e0f241bda3eab284b6579300" target="_blank" rel="noopener noreferrer">search page with no action item bullets</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_545f93f5f1404c12ae5b15f16ffc32b4" target="_blank" rel="noopener noreferrer">only action item section bullets are synced</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>2/2</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_b7ee9a91b5324c6a8d336c44abf2380a" target="_blank" rel="noopener noreferrer">only action item section bullets are synced</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>2/2</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_28c6630a300f457ea4d775731f696d38" target="_blank" rel="noopener noreferrer">only action item section bullets are synced</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>2/2</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_a422a8bf12544e4a85a14e659b0ff4cb" target="_blank" rel="noopener noreferrer">previously synced tasks are skipped</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_f6061632a3cd4c4a916ea9f574887420" target="_blank" rel="noopener noreferrer">previously synced tasks are skipped</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_0a56789e2b3c43f2b424e8a1cd3a945f" target="_blank" rel="noopener noreferrer">previously synced tasks are skipped</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_13f489ecae5c4968b7eda894ae7b4c30" target="_blank" rel="noopener noreferrer">cannot find notion page</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_83921ded58944260acc11113e0d9be03" target="_blank" rel="noopener noreferrer">cannot find notion page</a></td>
+              <td>2/3</td>
+              <td><span class="badge fail">FAIL</span></td>
+              <td>0/1</td>
+              <td>0/1</td>
+              <td>0/1</td>
+              <td>0/0</td>
+              <td class="notes">Expected 1 load_config call, but saw 0.; Expected 1 load_linear_teammates call, but saw 0.; Expected 1 Notion search, but saw 0.</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_fb745ef1b7c74db0aa97e14ebcf31a7e" target="_blank" rel="noopener noreferrer">cannot find notion page</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_5a8b337fdfb848a5bb43e6c378883f5c" target="_blank" rel="noopener noreferrer">no notion page provided uses default</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_616215594eb34223bc408b51a9579a25" target="_blank" rel="noopener noreferrer">no notion page provided uses default</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_e0912618c0ee4363a030686b2bb4ea9c" target="_blank" rel="noopener noreferrer">no notion page provided uses default</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_fca9d307bd44480c8b747f7e4b51f8b6" target="_blank" rel="noopener noreferrer">no linear team provided uses default</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_dd428b2b3fed4135bbbce7a54c8832d0" target="_blank" rel="noopener noreferrer">no linear team provided uses default</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_526d16af70fa4ba0b3e6441579e7a8ce" target="_blank" rel="noopener noreferrer">no linear team provided uses default</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_3015fab42a9a4d279c38bf2176de53f5" target="_blank" rel="noopener noreferrer">uses default assignee</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_f3044aa2f4124d11984d0abfe896a472" target="_blank" rel="noopener noreferrer">uses default assignee</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_098c9c1c904b42bc874b8847b76eb58b" target="_blank" rel="noopener noreferrer">uses default assignee</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_2ba0e54d4ede42ff9501e151ce2fcbef" target="_blank" rel="noopener noreferrer">notion page override beats config default</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_8e93bdd14eee41e6b1c6d8af8537823b" target="_blank" rel="noopener noreferrer">notion page override beats config default</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_65b539a8ffe544b284cbb0b2f2a63dd9" target="_blank" rel="noopener noreferrer">notion page override beats config default</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_8638041934b14d25bb137886bbbe1191" target="_blank" rel="noopener noreferrer">linear team override beats config default</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_5d960305262d4fb9a9c42674724d12c1" target="_blank" rel="noopener noreferrer">linear team override beats config default</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_42df36b59a3c4fab8294028dbb7789a5" target="_blank" rel="noopener noreferrer">linear team override beats config default</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_f4b0a6ae8db645e7ae5009d6746530f7" target="_blank" rel="noopener noreferrer">missing linear teammates asks and stores members</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_0c35b63357d14ecfa567c3d246a9e2e7" target="_blank" rel="noopener noreferrer">missing linear teammates asks and stores members</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_9cf1f268638548ceac0b954348dba81f" target="_blank" rel="noopener noreferrer">missing linear teammates asks and stores members</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_19472c8ea1fa479d8f0a3960c6204597" target="_blank" rel="noopener noreferrer">first name maps to canonical teammate</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_b2acbf05af634837aedf756db2013f4b" target="_blank" rel="noopener noreferrer">first name maps to canonical teammate</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_7349abe46c67438fb9d5c775ebb6d0e4" target="_blank" rel="noopener noreferrer">first name maps to canonical teammate</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_60aeef30def94270b550eab853eb1a8b" target="_blank" rel="noopener noreferrer">fuzzy nickname maps to canonical teammate</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_d3b4b65cc0df48c0acc06a2f7477cbd6" target="_blank" rel="noopener noreferrer">fuzzy nickname maps to canonical teammate</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_0052827193c1461f9c3ddffd7b180407" target="_blank" rel="noopener noreferrer">fuzzy nickname maps to canonical teammate</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_84df7ce088ae4c1bba50bb135a67d81e" target="_blank" rel="noopener noreferrer">known nickname maps to canonical teammate</a></td>
+              <td>1/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_0b43888572c74adea824aa264c2f8c53" target="_blank" rel="noopener noreferrer">known nickname maps to canonical teammate</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_c6d76c7156454eac9c8a6d3ffca48974" target="_blank" rel="noopener noreferrer">known nickname maps to canonical teammate</a></td>
+              <td>3/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_414203134faf46d8bd6a7843858423f5" target="_blank" rel="noopener noreferrer">unknown nickname asks stores and continues</a></td>
+              <td>1/3</td>
+              <td><span class="badge fail">FAIL</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">Expected stored Linear teammates to be {&#x27;dzhang55&#x27;: [&#x27;Daniel&#x27;], &#x27;John Doe&#x27;: []}, but they were {&#x27;dzhang55&#x27;: [], &#x27;John Doe&#x27;: []}.</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_a86b542ee3354176854b1d3b80c38b04" target="_blank" rel="noopener noreferrer">unknown nickname asks stores and continues</a></td>
+              <td>2/3</td>
+              <td><span class="badge pass">PASS</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">-</td>
+            </tr>
+            
+            <tr>
+              <td class="case"><a href="https://platform.openai.com/logs/trace?trace_id=trace_03dbfc1f089d4649b7f4cd5af34d0006" target="_blank" rel="noopener noreferrer">unknown nickname asks stores and continues</a></td>
+              <td>3/3</td>
+              <td><span class="badge fail">FAIL</span></td>
+              <td>1/1</td>
+              <td>1/1</td>
+              <td>0/0</td>
+              <td>1/1</td>
+              <td class="notes">Expected stored Linear teammates to be {&#x27;dzhang55&#x27;: [&#x27;Daniel&#x27;], &#x27;John Doe&#x27;: []}, but they were {&#x27;dzhang55&#x27;: [], &#x27;John Doe&#x27;: []}.</td>
+            </tr>
+            
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
