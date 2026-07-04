@@ -12,11 +12,11 @@ from config import (
     load_config,
     load_linear_teammates,
     load_linear_teammates_tool,
-    read_config_tool,
+    read_sync_defaults_tool,
     save_config,
     save_linear_teammates,
-    update_config,
-    update_config_tool,
+    save_sync_defaults,
+    save_sync_defaults_tool,
     update_linear_teammates_tool,
 )
 
@@ -31,32 +31,36 @@ def test_save_and_reload_config(tmp_path):
         default_notion_doc_name="Weekly Plan",
         default_notion_doc_id="notion-page-123",
         default_assignee="Daniel",
-        default_linear_org="ARC",
+        default_linear_team="ARC",
     )
 
     assert save_config(config, path) == config
     assert load_config(path) == config
 
 
-def test_partial_update_preserves_unspecified_fields(tmp_path):
+def test_save_sync_defaults_replaces_provided_fields_and_preserves_unspecified_fields(tmp_path):
     path = tmp_path / "config.json"
     save_config(
         Config(
             default_notion_doc_name="Weekly Plan",
             default_notion_doc_id="notion-page-123",
-            default_assignee="Daniel",
-            default_linear_org="ARC",
+            default_assignee=None,
+            default_linear_team="ARC",
         ),
         path,
     )
 
-    updated = update_config(default_assignee="Priya", path=path)
+    updated = save_sync_defaults(
+        default_notion_doc_name="Other Plan",
+        default_assignee="Priya",
+        path=path,
+    )
 
     assert updated == Config(
-        default_notion_doc_name="Weekly Plan",
+        default_notion_doc_name="Other Plan",
         default_notion_doc_id="notion-page-123",
         default_assignee="Priya",
-        default_linear_org="ARC",
+        default_linear_team="ARC",
     )
 
 
@@ -67,7 +71,7 @@ def test_update_rejects_unknown_keys(tmp_path):
                 "default_notion_doc_name": "Weekly Plan",
                 "default_notion_doc_id": None,
                 "default_assignee": None,
-                "default_linear_org": None,
+                "default_linear_team": None,
                 "notion_doc_name": "Legacy Field",
             }
         )
@@ -86,29 +90,29 @@ def test_update_rejects_default_labels(tmp_path):
             default_notion_doc_name="Weekly Plan",
             default_notion_doc_id="notion-page-123",
             default_assignee="Daniel",
-            default_linear_org="ARC",
+            default_linear_team="ARC",
         ),
         path,
     )
 
     with pytest.raises(ValueError, match="Unknown config key"):
-        asyncio.run(update_config_tool(None, '{"default_labels": []}', config_path=path))
+        asyncio.run(save_sync_defaults_tool(None, '{"default_labels": []}', config_path=path))
 
 
 def test_config_tools_return_json(tmp_path):
     path = tmp_path / "config.json"
 
-    read_result = json.loads(asyncio.run(read_config_tool(None, "{}", config_path=path)))
+    read_result = json.loads(asyncio.run(read_sync_defaults_tool(None, "{}", config_path=path)))
     assert read_result == {
         "default_notion_doc_name": None,
         "default_notion_doc_id": None,
         "default_assignee": None,
-        "default_linear_org": None,
+        "default_linear_team": None,
     }
 
     update_result = json.loads(
         asyncio.run(
-            update_config_tool(
+            save_sync_defaults_tool(
                 None,
                 json.dumps(
                     {
@@ -126,7 +130,7 @@ def test_config_tools_return_json(tmp_path):
         "default_notion_doc_name": "Weekly Plan",
         "default_notion_doc_id": "notion-page-123",
         "default_assignee": "Daniel",
-        "default_linear_org": None,
+        "default_linear_team": None,
     }
     assert load_config(path) == Config(
         default_notion_doc_name="Weekly Plan",
@@ -198,8 +202,8 @@ def test_update_linear_teammates_tool_rejects_unknown_keys(tmp_path):
 
 def test_config_tools_expose_local_tool_names():
     assert [tool.name for tool in build_config_tools()] == [
-        "load_config",
-        "update_config",
+        "read_sync_defaults",
+        "save_sync_defaults",
         "load_linear_teammates",
         "update_linear_teammates",
     ]
@@ -208,7 +212,7 @@ def test_config_tools_expose_local_tool_names():
 def test_format_config_context_renders_config_snapshot():
     context = format_config_context(default_config())
 
-    assert "Current local config JSON:" in context
+    assert "Current local sync defaults JSON:" in context
     assert "default_notion_doc_name" in context
     assert "default_notion_doc_id" in context
     assert "default_labels" not in context

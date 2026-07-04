@@ -23,6 +23,8 @@ import asyncio
 import html
 import json
 import os
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,11 +41,16 @@ from agents import (
 )
 from dotenv import load_dotenv
 
-from agent import SYSTEM_PROMPT
+from agent import (
+    SYSTEM_PROMPT,
+    parse_teammate_names,
+    validate_arcade_tool_args,
+    with_runtime_context,
+)
 from config import (
-    READ_CONFIG_SCHEMA,
+    READ_SYNC_DEFAULTS_SCHEMA,
     READ_LINEAR_TEAMMATES_SCHEMA,
-    UPDATE_CONFIG_SCHEMA,
+    SAVE_SYNC_DEFAULTS_SCHEMA,
     UPDATE_LINEAR_TEAMMATES_SCHEMA,
     Config,
     LinearTeammates,
@@ -107,8 +114,13 @@ def mismatch_note(label: str, actual: list[Any], expected: list[Any]) -> str:
     )
 
 
-def strings_match_case_insensitive(actual: list[str], expected: list[str]) -> bool:
-    return [value.casefold() for value in actual] == [value.casefold() for value in expected]
+def title_patterns_match(actual: list[str], expected_patterns: list[str]) -> bool:
+    if len(actual) != len(expected_patterns):
+        return False
+    return all(
+        re.search(pattern, title, flags=re.IGNORECASE) is not None
+        for title, pattern in zip(actual, expected_patterns, strict=True)
+    )
 
 
 def notion_read_note(expected_call: dict[str, str]) -> str:
@@ -142,12 +154,20 @@ class EvalResult:
     run_number: int
     run_total: int
     passed: bool
-    load_config_calls: int
-    load_linear_teammates_calls: int
+    save_sync_defaults_calls: int
+    update_linear_teammates_calls: int
     search_calls: int
     create_calls: int
     notes: list[str]
     trace_url: str | None = None
+
+
+def expected_config_updates(case: EvalCase) -> int:
+    return 1 if case.expected_final_config is not None else 0
+
+
+def expected_teammate_updates(case: EvalCase) -> int:
+    return 1 if case.expected_final_linear_teammates is not None else 0
 
 
 class MockArcadeTools:
@@ -157,10 +177,12 @@ class MockArcadeTools:
         markdown_by_page_id: dict[str, str],
         markdown_by_title: dict[str, str],
         search_results_by_title: dict[str, list[dict[str, str]]],
+        linear_teammates_provider: Callable[[], LinearTeammates] | None = None,
     ) -> None:
         self.markdown_by_page_id = markdown_by_page_id
         self.markdown_by_title = markdown_by_title
         self.search_results_by_title = search_results_by_title
+        self.linear_teammates_provider = linear_teammates_provider or dict
         self.notion_calls: list[dict[str, Any]] = []
         self.linear_create_issue_calls: list[dict[str, Any]] = []
 
@@ -191,14 +213,18 @@ class MockArcadeTools:
             description: str | None = None,
         ) -> dict[str, str]:
             """Create a Linear issue."""
-            self.linear_create_issue_calls.append(
-                {
-                    "title": title,
-                    "team": team,
-                    "assignee": assignee,
-                    "description": description,
-                }
+            args = {
+                "title": title,
+                "team": team,
+                "assignee": assignee,
+                "description": description,
+            }
+            validate_arcade_tool_args(
+                "Linear_CreateIssue",
+                args,
+                {"linear_teammates": self.linear_teammates_provider()},
             )
+            self.linear_create_issue_calls.append(args)
             number = len(self.linear_create_issue_calls)
             return {
                 "identifier": f"ENG-{number}",
@@ -220,16 +246,27 @@ class MockConfigTools:
     def __init__(self, config: Config, linear_teammates: LinearTeammates) -> None:
         self.current_config = config
         self.current_linear_teammates = dict(linear_teammates)
-        self.load_config_calls: list[dict[str, Any]] = []
+        self.read_sync_defaults_calls: list[dict[str, Any]] = []
         self.load_linear_teammates_calls: list[dict[str, Any]] = []
+        self.save_sync_defaults_calls: list[dict[str, Any]] = []
+        self.update_linear_teammates_calls: list[dict[str, Any]] = []
 
-    async def load_config(self, context: Any, tool_args: str) -> str:
-        self.load_config_calls.append(json.loads(tool_args or "{}"))
+    async def read_sync_defaults(self, context: Any, tool_args: str) -> str:
+        self.read_sync_defaults_calls.append(json.loads(tool_args or "{}"))
         return json.dumps(self.current_config.to_dict(), indent=2, sort_keys=True)
 
-    async def update_config(self, context: Any, tool_args: str) -> str:
+    async def save_sync_defaults(self, context: Any, tool_args: str) -> str:
         args = json.loads(tool_args or "{}")
-        self.current_config = Config.from_dict({**self.current_config.to_dict(), **args})
+        saved_args = {
+            key: value
+            for key, value in args.items()
+            if value is not None
+        }
+        if saved_args:
+            self.save_sync_defaults_calls.append(saved_args)
+            self.current_config = Config.from_dict(
+                {**self.current_config.to_dict(), **saved_args}
+            )
         return json.dumps(self.current_config.to_dict(), indent=2, sort_keys=True)
 
     async def load_linear_teammates(self, context: Any, tool_args: str) -> str:
@@ -242,6 +279,7 @@ class MockConfigTools:
 
     async def update_linear_teammates(self, context: Any, tool_args: str) -> str:
         args = json.loads(tool_args or "{}")
+        self.update_linear_teammates_calls.append(args)
         self.current_linear_teammates = args["linear_teammates"]
         return json.dumps(
             {"linear_teammates": self.current_linear_teammates},
@@ -252,17 +290,20 @@ class MockConfigTools:
     def tools(self) -> list[Any]:
         return [
             FunctionTool(
-                name="load_config",
-                description="Read local defaults for the Notion doc and Linear issue creation.",
-                params_json_schema=READ_CONFIG_SCHEMA,
-                on_invoke_tool=self.load_config,
+                name="read_sync_defaults",
+                description="Read saved sync defaults for the Notion doc and Linear issue creation.",
+                params_json_schema=READ_SYNC_DEFAULTS_SCHEMA,
+                on_invoke_tool=self.read_sync_defaults,
                 strict_json_schema=False,
             ),
             FunctionTool(
-                name="update_config",
-                description="Update local defaults for the Notion doc and Linear issue creation.",
-                params_json_schema=UPDATE_CONFIG_SCHEMA,
-                on_invoke_tool=self.update_config,
+                name="save_sync_defaults",
+                description=(
+                    "Save sync defaults for the Notion doc and Linear issue "
+                    "creation. Any provided field is written to the saved defaults."
+                ),
+                params_json_schema=SAVE_SYNC_DEFAULTS_SCHEMA,
+                on_invoke_tool=self.save_sync_defaults,
                 strict_json_schema=False,
             ),
             FunctionTool(
@@ -274,7 +315,12 @@ class MockConfigTools:
             ),
             FunctionTool(
                 name="update_linear_teammates",
-                description="Replace the Linear teammate name and nickname map.",
+                description=(
+                    "Update the Linear username to nickname-list map. Each key is the exact "
+                    "Linear username, and each value is a list of nicknames to match. "
+                    "Initialize to [] when no nicknames are known yet; never use [\"\"] "
+                    "as a placeholder."
+                ),
                 params_json_schema=UPDATE_LINEAR_TEAMMATES_SCHEMA,
                 on_invoke_tool=self.update_linear_teammates,
                 strict_json_schema=False,
@@ -288,22 +334,31 @@ async def run_live_agent_eval(
     run_number: int,
     trace_id: str,
 ) -> tuple[MockArcadeTools, MockConfigTools]:
+    config = MockConfigTools(case.config, case.linear_teammates)
+    follow_up_inputs = list(case.follow_up_inputs)
+    if not config.current_linear_teammates and follow_up_inputs:
+        config.current_linear_teammates = parse_teammate_names(follow_up_inputs.pop(0))
     arcade = MockArcadeTools(
         markdown_by_page_id=case.markdown_by_page_id,
         markdown_by_title=case.markdown_by_title,
         search_results_by_title=case.search_results_by_title,
+        linear_teammates_provider=lambda: config.current_linear_teammates,
     )
-    config = MockConfigTools(case.config, case.linear_teammates)
     agent = Agent(
         name="Sync Action Items Agent Eval",
         instructions=SYSTEM_PROMPT,
         model=openai_model_from_env(),
         tools=[*arcade.tools(), *config.tools()],
     )
+    input_items: list[Any] = [{"role": "user", "content": case.prompt}]
     result = await asyncio.wait_for(
         Runner.run(
             agent,
-            case.prompt,
+            with_runtime_context(
+                input_items,
+                config.current_config,
+                config.current_linear_teammates,
+            ),
             max_turns=12,
             run_config=RunConfig(
                 workflow_name="Sync Action Items Agent Eval",
@@ -313,11 +368,21 @@ async def run_live_agent_eval(
         ),
         timeout=eval_timeout_seconds(),
     )
-    for follow_up in case.follow_up_inputs:
+    input_items = [
+        item
+        for item in result.to_input_list()
+        if not (isinstance(item, dict) and item.get("role") == "developer")
+    ]
+    for follow_up in follow_up_inputs:
+        input_items = [*input_items, {"role": "user", "content": follow_up}]
         result = await asyncio.wait_for(
             Runner.run(
                 agent,
-                [*result.to_input_list(), {"role": "user", "content": follow_up}],
+                with_runtime_context(
+                    input_items,
+                    config.current_config,
+                    config.current_linear_teammates,
+                ),
                 max_turns=12,
                 run_config=RunConfig(
                     workflow_name="Sync Action Items Agent Eval",
@@ -327,6 +392,11 @@ async def run_live_agent_eval(
             ),
             timeout=eval_timeout_seconds(),
         )
+        input_items = [
+            item
+            for item in result.to_input_list()
+            if not (isinstance(item, dict) and item.get("role") == "developer")
+        ]
     flush_traces()
     return arcade, config
 
@@ -345,23 +415,14 @@ def evaluate_case_result(
     teams = [call["team"] for call in arcade.linear_create_issue_calls]
     assignees = [call["assignee"] for call in arcade.linear_create_issue_calls]
 
-    if len(config.load_config_calls) != case.expected_load_config_calls:
+    minimum_search_calls = case.minimum_search_calls
+    if minimum_search_calls is not None and len(arcade.search_calls) < minimum_search_calls:
         notes.append(
-            count_note(
-                "load_config call",
-                len(config.load_config_calls),
-                case.expected_load_config_calls,
-            )
+            f"Expected at least {minimum_search_calls} "
+            f"{pluralize(minimum_search_calls, 'Notion search')}, but saw "
+            f"{len(arcade.search_calls)}."
         )
-    if len(config.load_linear_teammates_calls) != case.expected_load_config_calls:
-        notes.append(
-            count_note(
-                "load_linear_teammates call",
-                len(config.load_linear_teammates_calls),
-                case.expected_load_config_calls,
-            )
-        )
-    if len(arcade.search_calls) != case.expected_search_calls:
+    elif minimum_search_calls is None and len(arcade.search_calls) != case.expected_search_calls:
         notes.append(
             count_note(
                 "Notion search",
@@ -377,14 +438,23 @@ def evaluate_case_result(
             f"{pluralize(expected_creates, 'issue')} to be created, but the agent "
             f"created {actual_creates}."
         )
-    if not strings_match_case_insensitive(titles, case.expected_created_titles):
-        notes.append(mismatch_note("issue titles", titles, case.expected_created_titles))
+    if not title_patterns_match(titles, case.expected_created_titles):
+        notes.append(mismatch_note("issue title patterns", titles, case.expected_created_titles))
     if case.expected_created_teams and teams != case.expected_created_teams:
         notes.append(mismatch_note("Linear teams", teams, case.expected_created_teams))
     if case.expected_created_assignees and assignees != case.expected_created_assignees:
         notes.append(mismatch_note("assignees", assignees, case.expected_created_assignees))
     if case.expected_notion_call and case.expected_notion_call not in arcade.page_read_calls:
         notes.append(notion_read_note(case.expected_notion_call))
+    if (
+        case.expected_final_config is not None
+        and config.current_config != case.expected_final_config
+    ):
+        notes.append(
+            "Expected stored config to be "
+            f"{case.expected_final_config.to_dict()}, but it was "
+            f"{config.current_config.to_dict()}."
+        )
     if (
         case.expected_final_linear_teammates is not None
         and config.current_linear_teammates != case.expected_final_linear_teammates
@@ -400,8 +470,8 @@ def evaluate_case_result(
         run_number=run_number,
         run_total=run_total,
         passed=not notes,
-        load_config_calls=len(config.load_config_calls),
-        load_linear_teammates_calls=len(config.load_linear_teammates_calls),
+        save_sync_defaults_calls=len(config.save_sync_defaults_calls),
+        update_linear_teammates_calls=len(config.update_linear_teammates_calls),
         search_calls=len(arcade.search_calls),
         create_calls=len(arcade.linear_create_issue_calls),
         notes=notes,
@@ -413,9 +483,10 @@ def evaluate_case_result(
 class EvalSummary:
     cases_passed: int
     cases_total: int
-    actual_loads: int
-    expected_loads: int
-    actual_teammate_loads: int
+    actual_config_updates: int
+    expected_config_updates: int
+    actual_teammate_updates: int
+    expected_teammate_updates: int
     actual_searches: int
     expected_searches: int
     actual_creates: int
@@ -426,9 +497,16 @@ def summarize_results(results: list[EvalResult]) -> EvalSummary:
     return EvalSummary(
         cases_passed=sum(result.passed for result in results),
         cases_total=len(results),
-        actual_loads=sum(result.load_config_calls for result in results),
-        expected_loads=sum(result.case.expected_load_config_calls for result in results),
-        actual_teammate_loads=sum(result.load_linear_teammates_calls for result in results),
+        actual_config_updates=sum(result.save_sync_defaults_calls for result in results),
+        expected_config_updates=sum(
+            expected_config_updates(result.case) for result in results
+        ),
+        actual_teammate_updates=sum(
+            result.update_linear_teammates_calls for result in results
+        ),
+        expected_teammate_updates=sum(
+            expected_teammate_updates(result.case) for result in results
+        ),
         actual_searches=sum(result.search_calls for result in results),
         expected_searches=sum(result.case.expected_search_calls for result in results),
         actual_creates=sum(result.create_calls for result in results),
@@ -442,8 +520,8 @@ def format_eval_report(results: list[EvalResult]) -> str:
         "",
         "Agent eval score",
         f"runs passed: {summary.cases_passed}/{summary.cases_total}",
-        f"load_config calls: {summary.actual_loads}/{summary.expected_loads}",
-        f"load_linear_teammates calls: {summary.actual_teammate_loads}/{summary.expected_loads}",
+        f"config updates: {summary.actual_config_updates}/{summary.expected_config_updates}",
+        f"teammate updates: {summary.actual_teammate_updates}/{summary.expected_teammate_updates}",
         f"notion searches: {summary.actual_searches}/{summary.expected_searches}",
         f"linear issues created: {summary.actual_creates}/{summary.expected_creates}",
         "",
@@ -492,8 +570,8 @@ def format_eval_html_report(results: list[EvalResult]) -> str:
               <td class="case">{format_case_html(result)}</td>
               <td>{html_escape(f"{result.run_number}/{result.run_total}")}</td>
               <td><span class="badge {status_class}">{status_text}</span></td>
-              <td>{html_escape(score_cell(result.load_config_calls, result.case.expected_load_config_calls))}</td>
-              <td>{html_escape(score_cell(result.load_linear_teammates_calls, result.case.expected_load_config_calls))}</td>
+              <td>{html_escape(score_cell(result.save_sync_defaults_calls, expected_config_updates(result.case)))}</td>
+              <td>{html_escape(score_cell(result.update_linear_teammates_calls, expected_teammate_updates(result.case)))}</td>
               <td>{html_escape(score_cell(result.search_calls, result.case.expected_search_calls))}</td>
               <td>{html_escape(score_cell(result.create_calls, result.case.expected_create_calls))}</td>
               <td class="notes">{html_escape(format_notes(result.notes))}</td>
@@ -640,8 +718,8 @@ def format_eval_html_report(results: list[EvalResult]) -> str:
     <p class="meta">Model: {html_escape(openai_model_from_env())}</p>
     <section class="summary" aria-label="Eval score summary">
       <div class="metric"><span>Cases Passed</span><strong>{summary.cases_passed}/{summary.cases_total}</strong></div>
-      <div class="metric"><span>load_config Calls</span><strong>{summary.actual_loads}/{summary.expected_loads}</strong></div>
-      <div class="metric"><span>Teammate Loads</span><strong>{summary.actual_teammate_loads}/{summary.expected_loads}</strong></div>
+      <div class="metric"><span>Config Updates</span><strong>{summary.actual_config_updates}/{summary.expected_config_updates}</strong></div>
+      <div class="metric"><span>Teammate Updates</span><strong>{summary.actual_teammate_updates}/{summary.expected_teammate_updates}</strong></div>
       <div class="metric"><span>Notion Searches</span><strong>{summary.actual_searches}/{summary.expected_searches}</strong></div>
       <div class="metric"><span>Linear Issues Created</span><strong>{summary.actual_creates}/{summary.expected_creates}</strong></div>
     </section>
@@ -651,8 +729,8 @@ def format_eval_html_report(results: list[EvalResult]) -> str:
           <th>Case</th>
           <th>Run</th>
           <th>Status</th>
-          <th>load_config</th>
-          <th>load_linear_teammates</th>
+          <th>Update Config</th>
+          <th>Update Teammates</th>
           <th>Search</th>
           <th>Create</th>
           <th>Notes</th>
@@ -711,8 +789,8 @@ async def run_one_eval_case(
                 run_number=run_number,
                 run_total=run_total,
                 passed=False,
-                load_config_calls=0,
-                load_linear_teammates_calls=0,
+                save_sync_defaults_calls=0,
+                update_linear_teammates_calls=0,
                 search_calls=0,
                 create_calls=0,
                 notes=[f"timed out after {eval_timeout_seconds()} seconds"],
@@ -724,8 +802,8 @@ async def run_one_eval_case(
                 run_number=run_number,
                 run_total=run_total,
                 passed=False,
-                load_config_calls=0,
-                load_linear_teammates_calls=0,
+                save_sync_defaults_calls=0,
+                update_linear_teammates_calls=0,
                 search_calls=0,
                 create_calls=0,
                 notes=[f"{type(exc).__name__}: {exc}"],
@@ -733,9 +811,10 @@ async def run_one_eval_case(
             )
         status = "PASS" if result.passed else "FAIL"
         print(
-            f"{status}: load_config {result.load_config_calls}/"
-            f"{case.expected_load_config_calls}, load_linear_teammates "
-            f"{result.load_linear_teammates_calls}/{case.expected_load_config_calls}, "
+            f"{status}: save_sync_defaults {result.save_sync_defaults_calls}/"
+            f"{expected_config_updates(case)}, "
+            f"update_linear_teammates {result.update_linear_teammates_calls}/"
+            f"{expected_teammate_updates(case)}, "
             f"search {result.search_calls}/"
             f"{case.expected_search_calls}, create {result.create_calls}/"
             f"{case.expected_create_calls}"

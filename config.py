@@ -10,7 +10,7 @@ from agents import FunctionTool
 
 CONFIG_PATH = Path("config.json")
 LINEAR_TEAMMATES_PATH = Path("linear_teammates.json")
-CONFIG_CONTEXT_PREFIX = "Current local config JSON:"
+CONFIG_CONTEXT_PREFIX = "Current local sync defaults JSON:"
 UNSET = object()
 LinearTeammates = dict[str, list[str]]
 ConfigValue = str | None
@@ -21,7 +21,7 @@ class Config:
     default_notion_doc_name: str | None = None
     default_notion_doc_id: str | None = None
     default_assignee: str | None = None
-    default_linear_org: str | None = None
+    default_linear_team: str | None = None
 
     @classmethod
     def keys(cls) -> tuple[str, ...]:
@@ -54,12 +54,12 @@ CONFIG_FIELD_SCHEMA = {
     ],
 }
 CONFIG_FIELD_SCHEMAS = {key: CONFIG_FIELD_SCHEMA for key in CONFIG_KEYS}
-READ_CONFIG_SCHEMA = {
+READ_SYNC_DEFAULTS_SCHEMA = {
     "type": "object",
     "properties": {},
     "additionalProperties": False,
 }
-UPDATE_CONFIG_SCHEMA = {
+SAVE_SYNC_DEFAULTS_SCHEMA = {
     "type": "object",
     "properties": CONFIG_FIELD_SCHEMAS,
     "additionalProperties": False,
@@ -160,19 +160,19 @@ def save_config(config: Config, path: Path = CONFIG_PATH) -> Config:
     return config
 
 
-def update_config(
+def save_sync_defaults(
     *,
     default_notion_doc_name: str | None | object = UNSET,
     default_notion_doc_id: str | None | object = UNSET,
     default_assignee: str | None | object = UNSET,
-    default_linear_org: str | None | object = UNSET,
+    default_linear_team: str | None | object = UNSET,
     path: Path = CONFIG_PATH,
 ) -> Config:
     update_fields = {
         "default_notion_doc_name": default_notion_doc_name,
         "default_notion_doc_id": default_notion_doc_id,
         "default_assignee": default_assignee,
-        "default_linear_org": default_linear_org,
+        "default_linear_team": default_linear_team,
     }
     config_values = load_config(path).to_dict()
     for key, value in update_fields.items():
@@ -213,7 +213,7 @@ def save_linear_teammates(
     return linear_teammates
 
 
-async def load_config_tool(
+async def read_sync_defaults_tool(
     context: Any,
     tool_args: str,
     *,
@@ -222,10 +222,7 @@ async def load_config_tool(
     return json.dumps(load_config(config_path).to_dict(), indent=2, sort_keys=True)
 
 
-read_config_tool = load_config_tool
-
-
-async def update_config_tool(
+async def save_sync_defaults_tool(
     context: Any,
     tool_args: str,
     *,
@@ -233,17 +230,17 @@ async def update_config_tool(
 ) -> str:
     args = json.loads(tool_args or "{}")
     if not isinstance(args, dict):
-        raise ValueError("update_config requires a JSON object")
+        raise ValueError("save_sync_defaults requires a JSON object")
     unknown_keys = sorted(set(args) - set(CONFIG_KEYS))
     if unknown_keys:
         raise ValueError(f"Unknown config key(s): {', '.join(unknown_keys)}")
 
     return json.dumps(
-        update_config(
+        save_sync_defaults(
             default_notion_doc_name=args.get("default_notion_doc_name", UNSET),
             default_notion_doc_id=args.get("default_notion_doc_id", UNSET),
             default_assignee=args.get("default_assignee", UNSET),
-            default_linear_org=args.get("default_linear_org", UNSET),
+            default_linear_team=args.get("default_linear_team", UNSET),
             path=config_path,
         ).to_dict(),
         indent=2,
@@ -294,17 +291,20 @@ async def update_linear_teammates_tool(
 def build_config_tools() -> list[Any]:
     return [
         FunctionTool(
-            name="load_config",
-            description="Read local defaults for the Notion doc and Linear issue creation.",
-            params_json_schema=READ_CONFIG_SCHEMA,
-            on_invoke_tool=load_config_tool,
+            name="read_sync_defaults",
+            description="Read saved sync defaults for the Notion doc and Linear issue creation.",
+            params_json_schema=READ_SYNC_DEFAULTS_SCHEMA,
+            on_invoke_tool=read_sync_defaults_tool,
             strict_json_schema=False,
         ),
         FunctionTool(
-            name="update_config",
-            description="Update local defaults for the Notion doc and Linear issue creation.",
-            params_json_schema=UPDATE_CONFIG_SCHEMA,
-            on_invoke_tool=update_config_tool,
+            name="save_sync_defaults",
+            description=(
+                "Save sync defaults for the Notion doc and Linear issue creation. "
+                "Any provided field is written to the saved defaults."
+            ),
+            params_json_schema=SAVE_SYNC_DEFAULTS_SCHEMA,
+            on_invoke_tool=save_sync_defaults_tool,
             strict_json_schema=False,
         ),
         FunctionTool(

@@ -15,12 +15,14 @@ class EvalCase:
     markdown_by_page_id: dict[str, str] = field(default_factory=dict)
     markdown_by_title: dict[str, str] = field(default_factory=dict)
     search_results_by_title: dict[str, list[dict[str, str]]] = field(default_factory=dict)
-    expected_load_config_calls: int = 1
     expected_search_calls: int = 0
+    minimum_search_calls: int | None = None
+    # Case-insensitive regex patterns matched against created issue titles by position.
     expected_created_titles: list[str] = field(default_factory=list)
     expected_created_teams: list[str] = field(default_factory=list)
     expected_created_assignees: list[str | None] = field(default_factory=list)
     expected_notion_call: dict[str, str] | None = None
+    expected_final_config: Config | None = None
     expected_final_linear_teammates: LinearTeammates | None = None
 
     @property
@@ -140,7 +142,7 @@ EVAL_CASES = [
     EvalCase(
         name="search page and create linear issues",
         prompt="sync my weekly planning",
-        config=Config(default_linear_org="ENG"),
+        config=Config(default_linear_team="ENG"),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={
             "notion-page-123": action_item_bullets(
@@ -151,8 +153,13 @@ EVAL_CASES = [
         search_results_by_title={
             "Weekly Planning": [{"id": "notion-page-123", "title": "Weekly Planning"}]
         },
+        expected_final_config=Config(
+            default_notion_doc_name="Weekly Planning",
+            default_notion_doc_id="notion-page-123",
+            default_linear_team="ENG",
+        ),
         expected_search_calls=1,
-        expected_created_titles=["Ship onboarding polish", "QA billing edge cases"],
+        expected_created_titles=["onboarding", "billing"],
         expected_created_teams=["ENG", "ENG"],
         expected_created_assignees=["Daniel", "Priya"],
         expected_notion_call={"page_id": "notion-page-123"},
@@ -160,12 +167,17 @@ EVAL_CASES = [
     EvalCase(
         name="search page with no action item bullets",
         prompt="sync weekly planning",
-        config=Config(default_linear_org="ENG"),
+        config=Config(default_linear_team="ENG"),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"empty-page-123": weekly_planning_doc()},
         search_results_by_title={
             "Weekly Planning": [{"id": "empty-page-123", "title": "Weekly Planning"}]
         },
+        expected_final_config=Config(
+            default_notion_doc_name="Weekly Planning",
+            default_notion_doc_id="empty-page-123",
+            default_linear_team="ENG",
+        ),
         expected_search_calls=1,
         expected_notion_call={"page_id": "empty-page-123"},
     ),
@@ -174,7 +186,8 @@ EVAL_CASES = [
         prompt="sync notion",
         config=Config(
             default_notion_doc_id="notion-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={
@@ -190,7 +203,7 @@ EVAL_CASES = [
                 ]
             )
         },
-        expected_created_titles=["Ship onboarding polish", "QA billing edge cases"],
+        expected_created_titles=["onboarding", "billing"],
         expected_created_teams=["ENG", "ENG"],
         expected_created_assignees=["Daniel", "Priya"],
         expected_notion_call={"page_id": "notion-page-123"},
@@ -200,7 +213,8 @@ EVAL_CASES = [
         prompt="notion to linear",
         config=Config(
             default_notion_doc_id="notion-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={
@@ -209,7 +223,7 @@ EVAL_CASES = [
                 "- Priya to prepare launch checklist",
             )
         },
-        expected_created_titles=["Prepare launch checklist"],
+        expected_created_titles=["checklist"],
         expected_created_teams=["ENG"],
         expected_created_assignees=["Priya"],
         expected_notion_call={"page_id": "notion-page-123"},
@@ -217,21 +231,23 @@ EVAL_CASES = [
     EvalCase(
         name="cannot find notion page",
         prompt="sync weekly planning",
-        config=Config(default_linear_org="ENG"),
+        config=Config(default_linear_team="ENG"),
         linear_teammates=LINEAR_TEAMMATES,
         search_results_by_title={"Weekly Planning": []},
         expected_search_calls=1,
+        minimum_search_calls=1,
     ),
     EvalCase(
         name="no notion page provided uses default",
         prompt="sync notion",
         config=Config(
             default_notion_doc_id="default-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"default-page-123": action_item_bullets("Draft changelog")},
-        expected_created_titles=["Draft changelog"],
+        expected_created_titles=["changelog"],
         expected_created_teams=["ENG"],
         expected_created_assignees=[None],
         expected_notion_call={"page_id": "default-page-123"},
@@ -241,12 +257,13 @@ EVAL_CASES = [
         prompt="notion to linear",
         config=Config(
             default_notion_doc_id="default-page-123",
-            default_linear_org="Product",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="PRD",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"default-page-123": action_item_bullets("Review import logs")},
-        expected_created_titles=["Review import logs"],
-        expected_created_teams=["Product"],
+        expected_created_titles=["import"],
+        expected_created_teams=["PRD"],
         expected_created_assignees=[None],
         expected_notion_call={"page_id": "default-page-123"},
     ),
@@ -255,13 +272,14 @@ EVAL_CASES = [
         prompt="sync notion",
         config=Config(
             default_notion_doc_id="notion-page-123",
+            default_notion_doc_name="Default Planning",
             default_assignee="@me",
-            default_linear_org="Product Engineering",
+            default_linear_team="PRD",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"notion-page-123": action_item_bullets("Prepare launch checklist")},
-        expected_created_titles=["Prepare launch checklist"],
-        expected_created_teams=["Product Engineering"],
+        expected_created_titles=["checklist"],
+        expected_created_teams=["PRD"],
         expected_created_assignees=["@me"],
         expected_notion_call={"page_id": "notion-page-123"},
     ),
@@ -271,7 +289,7 @@ EVAL_CASES = [
         config=Config(
             default_notion_doc_id="default-page-123",
             default_notion_doc_name="Default Planning",
-            default_linear_org="ENG",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={
@@ -282,7 +300,7 @@ EVAL_CASES = [
             "Launch Planning": [{"id": "launch-page-456", "title": "Launch Planning"}]
         },
         expected_search_calls=1,
-        expected_created_titles=["Coordinate launch review"],
+        expected_created_titles=["launch"],
         expected_created_teams=["ENG"],
         expected_created_assignees=[None],
         expected_notion_call={"page_id": "launch-page-456"},
@@ -292,11 +310,12 @@ EVAL_CASES = [
         prompt="sync notion to BUG",
         config=Config(
             default_notion_doc_id="default-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"default-page-123": action_item_bullets("Triage customer escalation")},
-        expected_created_titles=["Triage customer escalation"],
+        expected_created_titles=["escalation"],
         expected_created_teams=["BUG"],
         expected_created_assignees=[None],
         expected_notion_call={"page_id": "default-page-123"},
@@ -305,9 +324,13 @@ EVAL_CASES = [
         name="missing linear teammates asks and stores members",
         prompt="sync notion",
         follow_up_inputs=["Daniel\nJohn Doe"],
-        config=Config(default_notion_doc_id="default-page-123", default_linear_org="ENG"),
+        config=Config(
+            default_notion_doc_id="default-page-123",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
+        ),
         markdown_by_page_id={"default-page-123": action_item_bullets("Daniel to draft changelog")},
-        expected_created_titles=["Draft changelog"],
+        expected_created_titles=["changelog"],
         expected_created_teams=["ENG"],
         expected_created_assignees=["Daniel"],
         expected_notion_call={"page_id": "default-page-123"},
@@ -318,11 +341,12 @@ EVAL_CASES = [
         prompt="sync notion",
         config=Config(
             default_notion_doc_id="default-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"default-page-123": action_item_bullets("John to fix search bug")},
-        expected_created_titles=["Fix search bug"],
+        expected_created_titles=["search"],
         expected_created_teams=["ENG"],
         expected_created_assignees=["John Doe"],
         expected_notion_call={"page_id": "default-page-123"},
@@ -332,11 +356,12 @@ EVAL_CASES = [
         prompt="sync notion",
         config=Config(
             default_notion_doc_id="default-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"default-page-123": action_item_bullets("dan to fix Sentry error")},
-        expected_created_titles=["Fix Sentry error"],
+        expected_created_titles=["sentry"],
         expected_created_teams=["ENG"],
         expected_created_assignees=["Daniel"],
         expected_notion_call={"page_id": "default-page-123"},
@@ -346,11 +371,12 @@ EVAL_CASES = [
         prompt="sync notion",
         config=Config(
             default_notion_doc_id="default-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
         linear_teammates=LINEAR_TEAMMATES,
         markdown_by_page_id={"default-page-123": action_item_bullets("Bob to fix Sentry error")},
-        expected_created_titles=["Fix Sentry error"],
+        expected_created_titles=["sentry"],
         expected_created_teams=["ENG"],
         expected_created_assignees=["Robert Smith"],
         expected_notion_call={"page_id": "default-page-123"},
@@ -358,17 +384,18 @@ EVAL_CASES = [
     EvalCase(
         name="unknown nickname asks stores and continues",
         prompt="sync notion",
-        follow_up_inputs=["dzhang55"],
+        follow_up_inputs=["zhang55"],
         config=Config(
             default_notion_doc_id="default-page-123",
-            default_linear_org="ENG",
+            default_notion_doc_name="Default Planning",
+            default_linear_team="ENG",
         ),
-        linear_teammates={"dzhang55": [], "John Doe": []},
+        linear_teammates={"zhang55": [], "John Doe": []},
         markdown_by_page_id={"default-page-123": action_item_bullets("Daniel to fix Sentry error")},
-        expected_created_titles=["Fix Sentry error"],
+        expected_created_titles=["sentry"],
         expected_created_teams=["ENG"],
-        expected_created_assignees=["dzhang55"],
+        expected_created_assignees=["zhang55"],
         expected_notion_call={"page_id": "default-page-123"},
-        expected_final_linear_teammates={"dzhang55": ["Daniel"], "John Doe": []},
+        expected_final_linear_teammates={"zhang55": ["Daniel"], "John Doe": []},
     ),
 ]

@@ -4,6 +4,8 @@ import asyncio
 import argparse
 import json
 import os
+import re
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -11,7 +13,16 @@ from typing import Any
 from agents import Agent, FunctionTool, RunConfig, Runner, flush_traces
 from dotenv import load_dotenv
 
-from config import CONFIG_PATH, LINEAR_TEAMMATES_PATH, build_config_tools
+from config import (
+    CONFIG_PATH,
+    LINEAR_TEAMMATES_PATH,
+    Config,
+    LinearTeammates,
+    build_config_tools,
+    load_config,
+    load_linear_teammates,
+    save_linear_teammates,
+)
 
 
 ALLOWED_ARCADE_TOOLS = [
@@ -28,38 +39,48 @@ SYSTEM_PROMPT = """You sync action items from Notion planning docs into Linear i
 
 When the user asks to sync Notion tasks into Linear:
 
-1. Call load_config exactly once before the first Notion or Linear tool call for this user request.
-2. Call load_linear_teammates exactly once before the first Notion or Linear tool call for this user request.
-3. If linear_teammates is an empty object, ask the user to paste the list of teammate names from the Linear /members page before reading Notion or creating Linear issues. When the user provides the list, update_linear_teammates with the provided list.
-4. Decide which Notion page to read:
+1. Use the preloaded runtime context as the authoritative source for the saved defaults and Linear teammate map. Do not call read_sync_defaults or load_linear_teammates just to start a sync; those read tools are only for explicit user requests to inspect saved state or if runtime context is unavailable.
+2. Decide which Notion page to read:
    - If the user names a Notion page or describes a planning doc by title, normalize the page title from the request, search Notion for that title, and read the selected page by id.
    - Treat phrases like "sync my weekly planning" or "sync weekly planning" as naming a Notion page titled "Weekly Planning". Drop possessive/filler words like "my", "our", and "the" from the title before searching. Do not ask which page to use before searching for the named page.
    - Do not treat generic words like "notion", "tasks", or "action items" alone as a page title.
-   - If the user does not name a page, use default_notion_doc_id when configured. Don't search by default_notion_doc_name, but use it instead of doc_id when referencing the doc to the user.
+   - If the user does not name a page and default_notion_doc_id is configured in runtime context, read that page id. Do not ask which page to use. Don't search by default_notion_doc_name, but use it instead of doc_id when referencing the doc to the user.
    - If no defaults are configured and the user does not name a page, ask the user which page they'd like to sync.
    - If searching for the page does not yield a good match, tell the user the pages you found and ask them which one they'd like to sync.
-5. Decide which Linear team to use:
+3. Decide which Linear team to use:
+   - A Linear team is required before creating any Linear issue. If neither the user request nor default_linear_team provides one, ask for the Linear team before calling Linear_CreateIssue.
    - If the user names a Linear team destination, use that team.
-   - If the user does not mention a Linear destination use default_linear_org.
-   - If the user does not name a Linear destination and default_linear_org is not set, ask the user which org they'd like to set.
-6. Find the latest/current "Action items" section in the Notion page content.
-7. Create Linear issues for every "-" bullet in that Action items section.
-8. Do not create issues from bullets outside the latest/current Action items section.
-9. Skip Action items bullets that already contain a Linear issue URL.
-10. For each synced Action items bullet:
+   - If the user does not mention a Linear destination use default_linear_team.
+   - If the user does not name a Linear destination and default_linear_team is not set, ask the user which Linear team should be saved as the default.
+4. Persist the defaults used for this sync immediately with save_sync_defaults. This is required bookkeeping, not optional.
+   - If the Notion page was selected from search results, set default_notion_doc_name and default_notion_doc_id from the selected result's title and id.
+   - If the Linear team was resolved from the user request or used for this sync, set default_linear_team.
+   - Provided fields replace previously saved defaults.
+   - If you asked the user for a missing Notion page or Linear team, their answer is not just for this run. Treat it as the new default unless they explicitly say "just this time".
+5. Find the most recent top-level planning section in the Notion page content, then use only the "Action items" subsection inside that latest section:
+   - Dated sections may be in ascending or descending order, but only select the one with the most recent date.
+   - Never fall back to older Action items sections.
+   - Create Linear issues for every "-" bullet in that most recent Action items subsection.
+      - If the most recent Action items subsection has no "-" bullets, create no issues and say no Action items needed syncing.
+   - Do not create issues from bullets outside the most recent Action items section.
+   - Skip Action items bullets that already contain a Linear issue URL.
+6. For each synced Action items bullet:
    - Derive the issue title from the bullet text after removing assignee mentions and Linear URLs.
-   - If the line mentions an assignee, assign the issue to that person. Notion assignee mentions are plain person names in an owner prefix like "Bob to fix Sentry error", "Alice: fix Sentry error", or "Charles - fix Sentry error". Do not treat email addresses or @handles as expected Notion assignee formats.
-   - Resolve explicit assignee text against linear_teammates before creating the issue. Match case-insensitively against canonical teammate names and stored nicknames. Exact matches win. Unambiguous first-name or fuzzy prefix matches are allowed, such as "John" matching "John Doe" or "dan" matching "Daniel".
+   - If the line mentions an assignee, assign the issue to that person. Notion assignee mentions are plain person names in an owner prefix like "Bob to fix Sentry error", "Alice: fix Sentry error", or "Charles - fix Sentry error".
+   - Resolve explicit assignee text against the preloaded linear_teammates before creating the issue. Match case-insensitively against canonical teammate names and stored nicknames. Exact matches win. Unambiguous first-name or fuzzy prefix matches are allowed, such as "Jane" matching "Jane Smith" or "sam" matching "Samuel".
      - If the assignee text is ambiguous, ask the user which configured teammate was meant before creating the issue.
      - If the assignee text does not match any configured teammate, ask in this style: "The names I know are A, B, and C. Which teammate goes by [name]?"
-     - When the user answers, add the unknown assignee as a nickname for that teammate, call update_linear_teammates, then create the issue. Example: "Bob" + "Robert Smith" updates {"John Doe": [], "Robert Smith": ["Bob"]} and assigns the issue to "Robert Smith".
-   - For owner-prefix bullets, pass only the exact canonical linear_teammates key as the Linear assignee, and remove the owner prefix from the title. For example, with linear_teammates {"Robert Smith": ["Bob"]}, "- Bob to fix Sentry error" should create a title like "Fix Sentry error" with assignee "Robert Smith".
+     - The user's reply selects the canonical linear_teammates key; the original assignee text becomes the nickname. If the reply exactly matches a configured key, append the original text to that key's nickname list, call update_linear_teammates, then create the issue using that canonical key as assignee. Example: known {"js95": [], "John Doe": []}, bullet "Jane to fix Sentry error", user replies "js95" -> update {"js95": ["Jane"], "John Doe": []}, create issue assigned to "js95".
+     - Never call Linear_CreateIssue for an item with an unresolved assignee until after any needed update_linear_teammates call succeeds.
+   - For owner-prefix bullets, pass only the exact canonical linear_teammates key as the Linear assignee. For example, with linear_teammates {"Robert Smith": ["Bob"]}, "- Bob to fix Sentry error" should create a title like "Fix Sentry error" with assignee "Robert Smith".
    - If the line has no assignee mention, use default_assignee when configured; otherwise leave the issue unassigned.
-11. If any defaults were not set, set them to what was used in this user request. Do not override existing values. When writing default_assignee from user-provided text, resolve it to either @me or a canonical linear_teammates key first.
-12. Only count a Linear issue as synced after Linear_CreateIssue returns a non-null result with a Linear issue URL.
-13. If Linear_CreateIssue fails, returns null, or returns no issue URL, tell the user the sync failed for that item. Do not say that item was synced.
-14. If any tool returns JSON with an "error" field, tell the user that error instead of treating the tool call as successful.
-15. Reply to the user with a concise summary of the synced issues using this format:
+7. When writing default_assignee from user-provided text, resolve it to either @me or a canonical linear_teammates key first.
+8. Only count a Linear issue as synced after Linear_CreateIssue returns a non-null result with a Linear issue URL.
+   - If Linear_CreateIssue fails, returns null, or returns no issue URL, tell the user the sync failed for that item. Do not say that item was synced.
+10. If any tool returns JSON with an "error" field, do not treat the tool call as successful.
+   - If the error is a tool argument validation error and the message or runtime context gives enough information to correct the arguments, retry the tool call once with corrected arguments before telling the user.
+   - If the error cannot be corrected safely, tell the user that error.
+11. Reply to the user with a concise summary of the synced issues using this format:
 
 I synced the action items from [notion_page_name] to [linear_team_name]:
 
@@ -75,6 +96,153 @@ If no issues were created, say that no Action items bullets needed syncing from 
 
 class ToolError(Exception):
     pass
+
+
+ArcadeToolArgValidator = Callable[[dict[str, Any], Any], None]
+
+
+def parse_teammate_names(value: str) -> LinearTeammates:
+    return {name.strip(): [] for name in re.split(r"[\n,]+", value) if name.strip()}
+
+
+def format_runtime_context(config: Config, linear_teammates: LinearTeammates) -> str:
+    config_dict = config.to_dict()
+    return (
+        "Runtime context preloaded by the Python app before this run. "
+        "This context is authoritative for sync requests; use it instead of calling read_sync_defaults or "
+        "load_linear_teammates.\n\n"
+        "If default_notion_doc_id is configured and the user did not name a page, read that page id without asking.\n"
+        "If default_linear_team is configured and the user did not name a team, use that team without asking.\n\n"
+        "Current local sync defaults JSON:\n"
+        f"{json.dumps(config_dict, sort_keys=True)}\n\n"
+        "Known Linear teammates JSON:\n"
+        f"{json.dumps(linear_teammates, sort_keys=True)}"
+    )
+
+
+def with_runtime_context(
+    history: list[Any],
+    config: Config,
+    linear_teammates: LinearTeammates,
+) -> list[Any]:
+    return [
+        {
+            "role": "developer",
+            "content": format_runtime_context(config, linear_teammates),
+        },
+        *history,
+    ]
+
+
+def run_item_name(event: Any) -> str | None:
+    name = getattr(event, "name", None)
+    if isinstance(name, str):
+        return name
+    item = getattr(event, "item", None)
+    return getattr(item, "type", None)
+
+
+def run_item_tool_name(event: Any) -> str | None:
+    item = getattr(event, "item", None)
+    raw_item = getattr(item, "raw_item", None)
+    for candidate in (item, raw_item):
+        if candidate is None:
+            continue
+        name = getattr(candidate, "name", None)
+        if isinstance(name, str):
+            return name
+        if isinstance(candidate, dict):
+            name = candidate.get("name")
+            if isinstance(name, str):
+                return name
+    return None
+
+
+def progress_for_tool(tool_name: str | None, *, completed: bool = False) -> str | None:
+    if not tool_name:
+        return None
+    action = "Finished" if completed else "Calling"
+    if "SearchByTitle" in tool_name:
+        return f"{action} Notion search..."
+    if "GetPageContent" in tool_name:
+        return f"{action} Notion page read..."
+    if "Linear_CreateIssue" in tool_name:
+        return f"{action} Linear issue creation..."
+    if tool_name == "update_linear_teammates" or tool_name == "save_sync_defaults":
+        return f"{action} local state update..."
+    return f"{action} {tool_name}..."
+
+
+def text_delta_from_event(event: Any) -> str | None:
+    data = getattr(event, "data", None)
+    if getattr(data, "type", None) == "response.output_text.delta":
+        delta = getattr(data, "delta", None)
+        return delta if isinstance(delta, str) else None
+    return None
+
+
+async def stream_agent_run(
+    agent: Any,
+    run_input: list[Any],
+    *,
+    context: dict[str, Any],
+    run_config: RunConfig,
+) -> Any:
+    result = Runner.run_streamed(
+        starting_agent=agent,
+        input=run_input,
+        context=context,
+        run_config=run_config,
+    )
+    printed_text = False
+    async for event in result.stream_events():
+        delta = text_delta_from_event(event)
+        if delta:
+            if not printed_text:
+                print("Agent: ", end="", flush=True)
+                printed_text = True
+            print(delta, end="", flush=True)
+            continue
+
+        if getattr(event, "type", None) != "run_item_stream_event":
+            continue
+
+        name = run_item_name(event)
+        if name == "tool_called":
+            message = progress_for_tool(run_item_tool_name(event))
+            if message:
+                print(f"\n{message}", flush=True)
+        elif name == "tool_output":
+            message = progress_for_tool(run_item_tool_name(event), completed=True)
+            if message:
+                print(f"{message}", flush=True)
+
+    if printed_text:
+        print()
+    return result
+
+
+def ensure_linear_teammates(
+    linear_teammates: LinearTeammates,
+    *,
+    input_fn: Any | None = None,
+    print_fn: Any | None = None,
+) -> LinearTeammates:
+    input_fn = input if input_fn is None else input_fn
+    print_fn = print if print_fn is None else print_fn
+
+    if not linear_teammates:
+        print_fn(
+            "Agent: I need your Linear teammate names from /members before syncing. "
+            "Paste teammate names separated by commas."
+        )
+        while not linear_teammates:
+            linear_teammates = parse_teammate_names(input_fn("Linear teammates: "))
+            if not linear_teammates:
+                print_fn("Agent: Please enter at least one Linear teammate name.")
+        save_linear_teammates(linear_teammates)
+
+    return linear_teammates
 
 
 def reset_config_files(
@@ -127,6 +295,51 @@ def validate_tool_output(tool_name: str, value: Any) -> None:
         raise ToolError(f"{tool_name} returned no Linear issue URL: {value!r}")
 
 
+def tool_runtime_context(context: Any) -> dict[str, Any]:
+    if isinstance(context, dict):
+        return context
+    raw_context = getattr(context, "context", None)
+    return raw_context if isinstance(raw_context, dict) else {}
+
+
+def validate_linear_assignee(args: dict[str, Any], context: Any) -> None:
+    assignee = args.get("assignee")
+    if assignee in (None, ""):
+        return
+    if assignee == "@me":
+        return
+    if not isinstance(assignee, str):
+        raise ToolError("Linear_CreateIssue assignee must be a string, null, or omitted.")
+
+    linear_teammates = tool_runtime_context(context).get("linear_teammates")
+    if not isinstance(linear_teammates, dict):
+        raise ToolError(
+            "Linear_CreateIssue assignee validation requires linear_teammates in runtime context."
+        )
+    if assignee not in linear_teammates:
+        known = ", ".join(sorted(str(name) for name in linear_teammates)) or "none"
+        raise ToolError(
+            "Linear_CreateIssue assignee must be an exact linear_teammates key. "
+            f"Got {assignee!r}. Known keys: {known}. "
+            "Resolve the assignee from the preloaded linear_teammates map, then retry "
+            "Linear_CreateIssue once with assignee set to the exact matching key."
+        )
+
+
+ARCADE_TOOL_ARG_VALIDATORS: dict[str, ArcadeToolArgValidator] = {
+    "Linear_CreateIssue": validate_linear_assignee,
+}
+
+
+def validate_arcade_tool_args(tool_name: str, args: Any, context: Any) -> None:
+    validator = ARCADE_TOOL_ARG_VALIDATORS.get(tool_name)
+    if validator is None:
+        return
+    if not isinstance(args, dict):
+        raise ToolError(f"{tool_name} arguments must be a JSON object.")
+    validator(args, context)
+
+
 def format_tool_error(tool_name: str, error: ToolError) -> str:
     return json.dumps(
         {
@@ -165,10 +378,12 @@ async def invoke_arcade_tool(
         if not user_id:
             raise ToolError("ARCADE_USER_ID is required")
 
+        parsed_tool_args = json.loads(tool_args)
+        validate_arcade_tool_args(tool_name, parsed_tool_args, context)
         await authorize_tool(client, user_id, tool_name)
         result = await client.tools.execute(
             tool_name=tool_name,
-            input=json.loads(tool_args),
+            input=parsed_tool_args,
             user_id=user_id,
         )
         if getattr(result, "success", True) is False:
@@ -221,12 +436,14 @@ async def build_agent() -> Any:
 
 
 async def chat_loop() -> int:
-    agent = await build_agent()
     history: list[Any] = []
     user_id = os.getenv("ARCADE_USER_ID")
 
     print("Sync Action Items Agent")
     print("Type 'exit' to quit.")
+    ensure_linear_teammates(load_linear_teammates(LINEAR_TEAMMATES_PATH))
+
+    agent = await build_agent()
 
     while True:
         try:
@@ -240,16 +457,28 @@ async def chat_loop() -> int:
         if not prompt:
             continue
 
+        config = load_config(CONFIG_PATH)
+        linear_teammates = load_linear_teammates(LINEAR_TEAMMATES_PATH)
+
         history.append({"role": "user", "content": prompt})
-        result = await Runner.run(
-            starting_agent=agent,
-            input=history,
-            context={"user_id": user_id},
+        result = await stream_agent_run(
+            agent=agent,
+            run_input=with_runtime_context(history, config, linear_teammates),
+            context={
+                "user_id": user_id,
+                "config": config.to_dict(),
+                "linear_teammates": linear_teammates,
+            },
             run_config=RunConfig(workflow_name="Sync Action Items Agent"),
         )
         flush_traces()
-        history = result.to_input_list()
-        print(f"Agent: {result.final_output}")
+        history = [
+            item
+            for item in result.to_input_list()
+            if not (isinstance(item, dict) and item.get("role") == "developer")
+        ]
+        if not result.final_output:
+            print("Agent: I could not produce a final response.")
 
 
 async def main_async(*, reset_config: bool = False) -> int:

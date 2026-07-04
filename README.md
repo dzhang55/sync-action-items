@@ -33,6 +33,8 @@ uv run python agent.py --reset-config
 
 ## Evals
 
+[See latest eval results here](eval-results.html)
+
 Run the live LLM evals:
 
 ```bash
